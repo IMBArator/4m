@@ -1,0 +1,23 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven {
+            name = 'MinecraftForge'
+            url = 'https://maven.minecraftforge.net/'
+        }
+        maven {
+            name = 'NeoForged'
+            url = 'https://maven.neoforged.net/releases'
+        }
+    }
+}
+
+rootProject.name = 'mmmm'
+
+// Pure Java, no Minecraft. Holds the media pipeline and the sync algorithm.
+include 'core'
+
+// Loader entry points. Both pull in ../common as a source directory (ADR-0002),
+// so there is no ':common' project to include here.
+include 'forge'
+include 'neoforge'

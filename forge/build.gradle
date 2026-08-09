@@ -1,0 +1,94 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '[6.0.24,6.2)'
+    id 'org.spongepowered.mixin' version '0.7.+'
+    id 'org.parchmentmc.librarian.forgegradle' version '1.+'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+base.archivesName = "${modId}-forge-${minecraftVersion}"
+
+minecraft {
+    mappings channel: 'parchment', version: "${parchmentMappingsVersion}-${parchmentMinecraftVersion}"
+    copyIdeResources = true
+    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
+
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', ''
+            property 'forge.logging.console.level', 'debug'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods { "${modId}" { source sourceSets.main } }
+        }
+        client { property 'forge.enabledGameTestNamespaces', modId }
+        server { property 'forge.enabledGameTestNamespaces', modId; args '--nogui' }
+    }
+}
+
+mixin {
+    add sourceSets.main, "${modId}.refmap.json"
+    config "${modId}.mixins.json"
+}
+
+// ADR-0002: one copy of the Minecraft-but-not-loader code, compiled twice.
+sourceSets.main.java.srcDir rootProject.file('common/src/main/java')
+sourceSets.main.resources.srcDir rootProject.file('common/src/main/resources')
+
+configurations {
+    // ADR-0010: JLayer is LGPL and ships nested and unmodified.
+    jarJar
+    // ADR-0010: JAADec is public domain and gets relocated.
+    shade
+    implementation.extendsFrom shade
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraftVersion}-${forgeVersion}"
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    implementation project(':core')
+
+    jarJar("javazoom:jlayer:${jlayerVersion}") {
+        jarJar.ranged(it, "[${jlayerVersion},)")
+    }
+    implementation "javazoom:jlayer:${jlayerVersion}"
+
+    shade "net.sourceforge.jaadec:jaad:${jaadVersion}"
+}
+
+jarJar.enable()
+
+shadowJar {
+    configurations = [project.configurations.shade]
+    // :core is ours, so its classes go in unrelocated.
+    from project(':core').sourceSets.main.output
+    relocate 'net.sourceforge.jaad', "${modGroup}.shaded.jaad"
+    archiveClassifier = 'shaded'
+}
+
+jar {
+    manifest {
+        attributes([
+                'Specification-Title'     : modId,
+                'Specification-Vendor'    : modAuthors,
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : modName,
+                'Implementation-Version'  : modVersion,
+                'Implementation-Vendor'   : modAuthors,
+        ])
+    }
+}
+
+tasks.named('jar') { finalizedBy 'reobfJar' }
+
+processResources {
+    def props = [
+            modId: modId, modName: modName, modVersion: modVersion,
+            modAuthors: modAuthors, modLicense: modLicense,
+            modDescription: modDescription,
+            minecraftVersion: minecraftVersion, forgeVersion: forgeVersion,
+    ]
+    inputs.properties props
+    filesMatching('META-INF/mods.toml') { expand props }
+}

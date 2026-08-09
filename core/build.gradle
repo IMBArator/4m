@@ -1,0 +1,54 @@
+plugins {
+    id 'java-library'
+}
+
+// :core is plain Java. No Minecraft, no loader, no LWJGL.
+//
+// The decoders are declared compileOnly on purpose (ADR-0004): the SERVER runs
+// source/ + frame/ + transport/ and must never need a codec on its classpath.
+// The loader modules put them on the CLIENT runtime classpath and own the
+// packaging split (JiJ vs shade, ADR-0010).
+dependencies {
+    compileOnly "javazoom:jlayer:${jlayerVersion}"
+    compileOnly "net.sourceforge.jaadec:jaad:${jaadVersion}"
+
+    testImplementation platform("org.junit:junit-bom:${junitVersion}")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Tests exercise the decoders, so they need them at runtime.
+    testImplementation "javazoom:jlayer:${jlayerVersion}"
+    testImplementation "net.sourceforge.jaadec:jaad:${jaadVersion}"
+}
+
+// Guard rail for ADR-0004: fail the build if server-side packages ever import a
+// codec library. Cheap to run, and the property it protects is easy to break by
+// accident with an innocent-looking import.
+tasks.register('checkServerSideHasNoCodecDeps') {
+    group = 'verification'
+    description = 'Fails if core/source, core/frame or core/transport import a decoder library.'
+    def serverDirs = ['source', 'frame', 'transport'].collect {
+        file("src/main/java/mmmm/core/${it}")
+    }
+    doLast {
+        def offenders = []
+        serverDirs.findAll { it.exists() }.each { dir ->
+            dir.eachFileRecurse { f ->
+                if (f.name.endsWith('.java')) {
+                    f.eachLine { line ->
+                        if (line =~ /^\s*import\s+(javazoom|net\.sourceforge\.jaad)\./) {
+                            offenders << "${f.name}: ${line.trim()}"
+                        }
+                    }
+                }
+            }
+        }
+        if (offenders) {
+            throw new GradleException(
+                "Server-side packages must not depend on a codec library (ADR-0004):\n  " +
+                offenders.join('\n  '))
+        }
+    }
+}
+
+tasks.named('check') { dependsOn 'checkServerSideHasNoCodecDeps' }

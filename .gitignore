@@ -1,0 +1,35 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# tools/build-core.sh output and its cached JUnit jar
+.build/
+
+# Minecraft dev runs
+run/
+runs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.eclipse/
+bin/
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
+
+# Stream captures from StreamProbe.
+#
+# Scoped to a captures/ directory and the repo root rather than matching *.ogg and friends
+# anywhere: ADR-0007 needs a placeholder .ogg committed under resources so the sound registry
+# resolves, and a blanket rule would silently refuse to add it.
+/captures/
+/*.raw
+/*.mp3
+/*.ogg
+/*.aac
