@@ -245,10 +245,16 @@ however much the ring has padded or dropped.
 **S2C:** `StreamOpen` (session, origin, `List<StreamInfo>`, epoch, delay, backlog) · `StreamData` ·
 `StreamMeta` (timestamped, so "now playing" flips *with* the audio rather than on arrival) ·
 `StreamClose` · `ClockPong`.
-**C2S:** `ClockPing`.
+**C2S:** `ClockPing` · `ConfigureRadio` (position, station, playing, volume).
 
-No `ConfigureRadio` packet: right-click is handled by vanilla `use()`, which is already server-side.
-It returns when the GUI does (§9 step 8).
+`ConfigureRadio` carries the **whole** intended state rather than a single action, so the handler is
+idempotent and there is one validation path instead of three. It is the only message a client can
+send that changes server state, and the channel registers messages without direction enforcement, so
+`ServerNetwork` re-derives everything from the sender: reach, permission level, and the URL itself.
+The screen's own gating is decoration.
+
+Its handler uses `enqueueWork` — unlike `ClockPing`, which stays on the network thread on purpose to
+keep its `nanoTime` stamp tight. Anything touching a block entity must reach the server thread first.
 
 All media sends route through `MediaTransport` rather than touching `SimpleChannel` directly
 (ADR-0006). `:core` cannot see the loader's networking API, which makes the violation impossible
@@ -407,8 +413,14 @@ difference.
 
 **7. Positional tuning**: attenuation curve, `stereoWhenClose`.
 
-**8. Config, commands, GUI.** `/mmmm radio <play|stop|station>`, server station list and allowlist,
-the right-click screen with a sync-health readout, and the `ConfigureRadio` packet it needs.
+**8. Config, commands, GUI** — **GUI DONE.** Right-click opens `RadioScreen`: station picker,
+play/stop, a volume slider synced to every client, a status line driven by the relay's
+`SessionState`, and an operator-only custom URL box. `ConfigureRadio` (§6.1) is the transport;
+`RadioAllowlist` persists the hosts an operator authorises (ADR-0011 amendment). Sneak-right-click
+stays a no-GUI play/stop shortcut.
+  - **Still open:** `/mmmm radio <play|stop|station>` commands, a server config file, and the
+    sync-health readout (drift, buffer depth, clock offset) — `ClientMediaSession` already exposes
+    all of it, so that is a rendering job, not a plumbing one.
 
 **9. `:neoforge`** — *not* mechanical, contrary to the original estimate. The entry class genuinely is
    a copy: NeoForge 47.1.106 is the Forge 47.1 fork, with the same `net.minecraftforge.*` packages and
@@ -525,8 +537,20 @@ Full records in [`docs/adr/`](docs/adr/), MADR 4.0.0.
 | 0008 | Downmix to mono for positional playback | Accepted |
 | 0009 | Hand-rolled HTTP/ICY client instead of a JDK HTTP client | Accepted |
 | 0010 | JLayer via Jar-in-Jar, JAADec shaded, STB Vorbis reused | Accepted |
-| 0011 | Default-deny egress allowlist on the server | Accepted |
+| 0011 | Default-deny egress allowlist on the server | Accepted, **amended** |
 | 0012 | Call the product 4M, keep `mmmm` as the mod id | Accepted |
+
+**On custom stations (ADR-0011 amendment).** An operator setting a custom URL *is* the per-server
+opt-in the ADR called for — there is no separate config toggle. Permission level 2 is enforced in
+`ServerNetwork` and the authorisation is persisted per world by `RadioAllowlist`.
+
+The authorisation covers the station's **whole resolution chain**, not the typed hostname, so
+`SourceOpener` takes a `Function<URI, EgressGuard>`. This is not incidental: a station URL is
+normally a playlist naming an endpoint on another domain — `streams.radiobob.de/…/play.pls` resolves
+to `regiocast.streamabc.net`, on a CDN whose hostname varies per request. Authorising only the typed
+host refuses nearly every real station on the second hop, which is exactly what happened on first
+in-game use. Range blocking is untouched and still applies to every hop: authorising a station never
+authorises an address, so `169.254.169.254` stays refused however it is reached.
 
 **On naming (ADR-0012).** The product is **4M**; the mod id, resource namespace and Java package root
 are all **`mmmm`**. Forge validates mod ids against `^[a-z][a-z0-9_]{1,63}$` and throws

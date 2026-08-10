@@ -64,3 +64,62 @@ Two implementation requirements that are easy to miss and load-bearing:
 Tests asserting refusal of `169.254.169.254`, `127.0.0.1`, `10.0.0.1` and their IPv6 forms —
 including when reached **via a redirect from an allowlisted host**, and when reached via a hostname
 that resolves to a private address.
+
+## Amendment — 2026-08-10: how the opt-in actually works
+
+This record left "opt-in per server and gated on permission level" as a shape rather than a
+mechanism. The radio control screen needed the mechanism, so here it is.
+
+**An operator setting a custom station URL is the opt-in.** There is no separate config toggle. A
+player with permission level 2 who submits a URL authorises that host, for that world, from then on;
+`ServerNetwork` enforces the permission check and `RadioAllowlist` — a `SavedData` — persists the
+result. Anyone below level 2 can only choose from the shipped station list.
+
+**An authorisation covers the station's whole resolution chain, not one hostname.** This was got
+wrong first time and corrected the same day, because it fails on essentially every real station.
+
+A station URL is normally a *playlist*. `https://streams.radiobob.de/…/play.pls` resolves to an
+endpoint at `regiocast.streamabc.net` — a different registrable domain, on a CDN whose hostname can
+vary between requests, so it cannot be enumerated in advance or pinned by suffix. Authorising only
+the typed host meant the first hop passed and the second was refused:
+
+```
+Station set. streams.radiobob.de is now allowed on this server.
+Radio … stopped: station …/play.pls failed permanently
+  (refused by the egress allowlist: Host 'regiocast.streamabc.net' is not on the station allowlist.)
+```
+
+So `SourceOpener` takes a `Function<URI, EgressGuard>`, and an operator-authorised station gets
+`allowingAnyPublicHost()` — the guard that blocks address ranges and nothing else. Everything not
+authorised still gets the default-deny shipped list.
+
+The security delta is worth being explicit about rather than buried: for an authorised station, the
+server may follow that station's chain to any *public* host. The operator has already chosen to
+stream content they do not control from a host they do not control, so a redirect to a second public
+host adds little — and the protection that actually matters here, refusal of loopback, RFC1918, CGNAT
+and link-local including `169.254.169.254`, is untouched and still applies to **every hop**. That is
+precisely why range blocking is kept as its own layer rather than folded into the allowlist.
+
+Two further consequences worth stating, because each could otherwise look like an oversight:
+
+* **The policy is resolved per connection**, which is what lets an authorisation take effect without
+  a restart and lets a session reconnecting an hour later see the current one. Each guard handed back
+  is still immutable, and is still consulted after DNS and on every redirect hop — neither of the two
+  load-bearing requirements above is weakened.
+* **Persistence is deliberate and is not merely convenience.** Without it, a radio keeps its URL
+  across a restart while the allowlist forgets it, so the station dies on next boot with no visible
+  cause. It is stored per world rather than in a config file because it is state produced by play,
+  not by an operator editing a file.
+* **Authorising a station never authorises an address.** Authorising `example.com` cannot reach
+  `169.254.169.254`, whether by resolving there or by redirecting there.
+
+One deliberate limitation: the submit-time check is **syntactic plus address literals only**. Scheme,
+host presence, and — for a host that is an IP literal — the full range check, which costs nothing
+because `getAllByName` does not resolve a literal. A *hostname* is not resolved at submit time,
+because DNS on the server thread would stall every player on the server for as long as the resolver
+took. Such a URL is accepted, then refused by the guard on the relay thread at connect time; the
+session reaches `FAILED`, `RadioServer` stops the block, logs the reason, and sends it to whoever
+configured that radio. So the protection is identical, and only the feedback is a second later.
+
+That last part — telling the player, not just the log — was added after the playlist failure above
+was diagnosed by reading the server log, which is not a thing a player can do.
