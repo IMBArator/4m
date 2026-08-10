@@ -63,7 +63,7 @@ public final class DecodeProbe {
         // Write the PCM to a temporary file first: the WAV header carries byte counts that are not
         // known until the last frame is decoded, and streaming to a growable file then patching the
         // header is simpler than buffering an unbounded amount of audio in memory.
-        Path pcmFile = Files.createTempFile("mmmm-decode", ".pcm");
+        Path pcmFile = Files.createTempFile("4m-decode", ".pcm");
         PcmFormat format;
         long pcmBytes;
         long framesIn = 0;

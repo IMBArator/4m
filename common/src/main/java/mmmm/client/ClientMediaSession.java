@@ -89,7 +89,7 @@ public final class ClientMediaSession implements Closeable {
         int ringBytes = (int) ((presentationDelayMs + RING_MARGIN_MS) / 1000.0 * sampleRate) * 2;
         this.ring = new PcmRingBuffer(Math.max(ringBytes, sampleRate * 2));
 
-        this.decodeThread = new Thread(this::decodeLoop, "mmmm-decode-" + THREAD_COUNTER.incrementAndGet());
+        this.decodeThread = new Thread(this::decodeLoop, "4m-decode-" + THREAD_COUNTER.incrementAndGet());
         this.decodeThread.setDaemon(true);
         this.decodeThread.start();
     }

@@ -25,7 +25,7 @@ public record SourceConfig(
             30_000,
             5,
             64 * 1024,
-            "mmmm/0.1 (Minecraft mod)");
+            "4m/0.1 (Minecraft mod)");
 
     public SourceConfig {
         if (connectTimeoutMs <= 0) throw new IllegalArgumentException("connectTimeoutMs must be positive");

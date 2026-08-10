@@ -115,7 +115,7 @@ public final class RelaySession implements Closeable {
         this.nanoClock = nanoClock;
         this.backlog = new FrameBacklog(config.backlogWindowMicros(), config.maxSettleBytes());
 
-        this.thread = new Thread(this::runSession, "mmmm-relay-" + sessionId);
+        this.thread = new Thread(this::runSession, "4m-relay-" + sessionId);
         // Daemon: a session left running must never be the reason a dedicated server refuses to exit.
         this.thread.setDaemon(true);
     }
