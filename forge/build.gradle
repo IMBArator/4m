@@ -19,7 +19,16 @@ minecraft {
             property 'forge.logging.console.level', 'debug'
             property 'mixin.env.remapRefMap', 'true'
             property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
-            mods { "${modId}" { source sourceSets.main } }
+            // :core is a separate Gradle project, not a jar on the classpath, so it has to be
+            // declared here as a source of the mod — otherwise the entry class's first touch of a
+            // mmmm.core.* class throws NoClassDefFoundError under runClient. The produced-jar path
+            // is a separate concern (shadowJar embeds :core; see PLAN.md §9 "Known defect").
+            mods {
+                "${modId}" {
+                    source sourceSets.main
+                    source project(':core').sourceSets.main
+                }
+            }
         }
         client { property 'forge.enabledGameTestNamespaces', modId }
         server { property 'forge.enabledGameTestNamespaces', modId; args '--nogui' }
@@ -59,6 +68,23 @@ dependencies {
 }
 
 jarJar.enable()
+
+// JLayer must be on the mod's runtime classpath during dev runs. ForgeGradle puts `mods` source
+// set OUTPUT on the mod classloader, but not `implementation` library jars — so javazoom.jl.*
+// classes are invisible to ClientMediaSession's constructor, and the NoClassDefFoundError is
+// silently swallowed by enqueueWork, producing a silent radio with no visible cause.
+// Copying the jar's classes into the compile output dir puts them on the mod classloader, which
+// ForgeGradle resolves from build/classes/java/main. In the produced jar JLayer still ships via
+// jarJar, separately and unmodified, per ADR-0010 — this is a dev-mode-only workaround.
+tasks.register('extractJLayer', Copy) {
+    from(zipTree(configurations.runtimeClasspath.filter { it.name.startsWith('jlayer') }.singleFile))
+    into(layout.buildDirectory.dir('classes/java/main'))
+    exclude 'META-INF/**'
+}
+
+tasks.named('compileJava') { finalizedBy 'extractJLayer' }
+tasks.named('jar') { dependsOn 'extractJLayer' }
+tasks.named('jarJar') { dependsOn 'extractJLayer' }
 
 shadowJar {
     configurations = [project.configurations.shade]
