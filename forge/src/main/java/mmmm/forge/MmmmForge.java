@@ -2,16 +2,17 @@ package mmmm.forge;
 
 import mmmm.Mmmm;
 import mmmm.MmmmContent;
-import mmmm.Stations;
 import mmmm.block.RadioBlock;
 import mmmm.client.ClientMedia;
 import mmmm.client.ClientMessages;
+import mmmm.client.ClientNetwork;
+import mmmm.client.RadioScreen;
 import mmmm.core.relay.RelayConfig;
 import mmmm.core.relay.RelayManager;
 import mmmm.core.relay.SourceOpener;
-import mmmm.core.security.EgressGuard;
 import mmmm.core.source.SourceConfig;
 import mmmm.server.RadioServer;
+import net.minecraft.client.Minecraft;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -80,10 +81,14 @@ public final class MmmmForge {
         // The block entity ticker is how shared code reaches the client audio path without the
         // dedicated server ever loading a {@code net.minecraft.client.*} class.
         RadioBlock.setClientTicker(ClientMedia::tickBlock);
+        // Same trick for the control panel: RadioBlock names neither Minecraft nor RadioScreen.
+        RadioBlock.setScreenOpener(radio -> Minecraft.getInstance().setScreen(new RadioScreen(radio)));
         // And the ping sender is how shared code sends a clock ping without referencing a loader's
         // networking package. The body constructs the loader-specific message.
         ClientMedia.setPingSender(clientNanos ->
                 MmmmNetwork.sendToServer(new ClientMessages.ClockPing(clientNanos)));
+        // The screen's outbound direction, for the same reason.
+        ClientNetwork.setConfigSender(MmmmNetwork::sendToServer);
     }
 
     // ------------------------------------------------------------------ server lifecycle
@@ -91,10 +96,13 @@ public final class MmmmForge {
     private static void serverStarting(ServerStartingEvent event) {
         // Fresh manager per server run. RadioServer.shutdown() nulls the previous one, so without
         // this a singleplayer world loaded after another would have no relay at all.
-        SourceOpener opener = SourceOpener.network(
-                EgressGuard.allowing(Stations.allowedHosts()),
-                SourceConfig.DEFAULT);
-        RadioServer.install(new RelayManager(opener, RelayConfig.DEFAULT, new ForgeMediaTransport()));
+        //
+        // Per station, not one fixed guard: an operator's authorisation applies to that station's
+        // whole resolution chain, because a playlist normally names a host on another domain
+        // (ADR-0011 amendment).
+        SourceOpener opener = SourceOpener.network(RadioServer::egressGuardFor, SourceConfig.DEFAULT);
+        RadioServer.install(event.getServer(),
+                new RelayManager(opener, RelayConfig.DEFAULT, new ForgeMediaTransport()));
     }
 
     private static void serverStopping(ServerStoppingEvent event) {

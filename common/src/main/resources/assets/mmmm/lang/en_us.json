@@ -1,3 +1,21 @@
 {
-  "block.mmmm.radio": "Radio"
+  "block.mmmm.radio": "Radio",
+
+  "gui.mmmm.radio.title": "Radio",
+  "gui.mmmm.radio.play": "Play",
+  "gui.mmmm.radio.stop": "Stop",
+  "gui.mmmm.radio.volume": "Volume: %s%%",
+  "gui.mmmm.radio.set": "Set",
+  "gui.mmmm.radio.url": "Station URL",
+  "gui.mmmm.radio.url_hint": "https://…",
+  "gui.mmmm.radio.custom_station": "Custom —",
+
+  "gui.mmmm.radio.status": "Status: %s",
+  "gui.mmmm.radio.state.off": "Off",
+  "gui.mmmm.radio.state.starting": "Starting…",
+  "gui.mmmm.radio.state.connecting": "Connecting…",
+  "gui.mmmm.radio.state.buffering": "Buffering…",
+  "gui.mmmm.radio.state.playing": "Playing",
+  "gui.mmmm.radio.state.reconnecting": "Reconnecting…",
+  "gui.mmmm.radio.state.failed": "Failed"
 }

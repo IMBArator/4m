@@ -142,6 +142,10 @@ public final class ClientMedia {
             sm.play(sound);
         }
         sound.setRateTrim(session.rateTrim());
+        // Follow the block's synced volume. Pushed every tick rather than only on change because the
+        // block entity is the authority: whatever another player just set on the server arrives here
+        // as a normal block update, and this is where it reaches the sound.
+        sound.setVolume(radio.getVolume());
         suppressMusic(true);
     }
 

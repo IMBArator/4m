@@ -3,6 +3,7 @@ package mmmm.block;
 import mmmm.MmmmContent;
 import mmmm.Stations;
 import mmmm.core.relay.RelaySession;
+import mmmm.core.relay.SessionState;
 import mmmm.server.RadioServer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -15,6 +16,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.net.URI;
+import java.util.UUID;
 
 /**
  * What a placed radio remembers: which station, whether it is on, and how loud.
@@ -37,11 +39,24 @@ public class RadioBlockEntity extends BlockEntity {
     private static final String KEY_PLAYING = "Playing";
     private static final String KEY_VOLUME = "Volume";
     private static final String KEY_SESSION = "SessionId";
+    private static final String KEY_STATE = "SessionState";
 
     private String station = Stations.defaultStation().url();
     private boolean playing;
     private float volume = 1.0F;
     private int sessionId = NO_SESSION;
+
+    /**
+     * What the relay is doing, mirrored from the server so the screen can say so.
+     *
+     * <p>{@code null} when there is no session. Like {@link #sessionId} this is synced but never
+     * saved: it describes a server run, not a block, and a state restored from disk would be a
+     * confident lie about a relay that no longer exists.
+     *
+     * <p>This is why the screen can show a status line without a packet of its own — the block
+     * entity is already synced, and a byte rides along for free.
+     */
+    private SessionState sessionState;
 
     /**
      * The relay this block is holding open, server side only.
@@ -54,6 +69,14 @@ public class RadioBlockEntity extends BlockEntity {
      */
     private transient RelaySession serverSession;
     private transient URI heldStation;
+
+    /**
+     * Who last changed this radio's settings, so a failure can be reported back to them.
+     *
+     * <p>Server-side and deliberately not persisted: it exists only to answer "the thing you just
+     * asked for did not work, here is why", which stops mattering the moment the server restarts.
+     */
+    private transient UUID lastConfiguredBy;
 
     public RadioBlockEntity(BlockPos pos, BlockState state) {
         super(MmmmContent.radioBlockEntity(), pos, state);
@@ -75,6 +98,18 @@ public class RadioBlockEntity extends BlockEntity {
 
     public int getSessionId() {
         return sessionId;
+    }
+
+    /** What the relay is doing, or {@code null} when this radio has no session. */
+    public SessionState getSessionState() {
+        return sessionState;
+    }
+
+    public void setSessionState(SessionState state) {
+        if (this.sessionState != state) {
+            this.sessionState = state;
+            sync();
+        }
     }
 
     public void setStation(String station) {
@@ -120,6 +155,14 @@ public class RadioBlockEntity extends BlockEntity {
         return heldStation;
     }
 
+    public UUID getLastConfiguredBy() {
+        return lastConfiguredBy;
+    }
+
+    public void setLastConfiguredBy(UUID player) {
+        this.lastConfiguredBy = player;
+    }
+
     /**
      * Marks the block changed and pushes it to everyone tracking the chunk.
      *
@@ -148,6 +191,17 @@ public class RadioBlockEntity extends BlockEntity {
         }
         // Absent from disk on purpose: a session id is valid only for the server run that issued it.
         sessionId = tag.contains(KEY_SESSION, Tag.TAG_INT) ? tag.getInt(KEY_SESSION) : NO_SESSION;
+        sessionState = readState(tag);
+    }
+
+    /** Reads the synced state, tolerating both absence and an ordinal from a different version. */
+    private static SessionState readState(CompoundTag tag) {
+        if (!tag.contains(KEY_STATE, Tag.TAG_INT)) {
+            return null;
+        }
+        int ordinal = tag.getInt(KEY_STATE);
+        SessionState[] values = SessionState.values();
+        return ordinal >= 0 && ordinal < values.length ? values[ordinal] : null;
     }
 
     @Override
@@ -164,6 +218,9 @@ public class RadioBlockEntity extends BlockEntity {
         CompoundTag tag = new CompoundTag();
         saveAdditional(tag);
         tag.putInt(KEY_SESSION, sessionId);
+        if (sessionState != null) {
+            tag.putInt(KEY_STATE, sessionState.ordinal());
+        }
         return tag;
     }
 

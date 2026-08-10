@@ -86,6 +86,17 @@ public class RadioBlock extends HorizontalDirectionalBlock implements EntityBloc
         clientTicker = ticker;
     }
 
+    /**
+     * Opens the control panel, installed by the loader's client setup for the same reason as
+     * {@link #clientTicker} — {@code RadioScreen} is a {@code net.minecraft.client} type and this
+     * class is on the dedicated server's classpath.
+     */
+    private static Consumer<RadioBlockEntity> screenOpener = be -> { };
+
+    public static void setScreenOpener(Consumer<RadioBlockEntity> opener) {
+        screenOpener = opener;
+    }
+
     @Override
     public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
         return new RadioBlockEntity(pos, state);
@@ -103,34 +114,35 @@ public class RadioBlock extends HorizontalDirectionalBlock implements EntityBloc
     }
 
     /**
-     * Right-click toggles playback; sneak-right-click steps to the next station.
+     * Right-click opens the control panel; sneak-right-click just toggles playback.
      *
-     * <p>Everything happens server-side: the block entity is the authority on what is playing, and
-     * its change propagates to clients through the normal block-update path (master plan §5.2).
+     * <p>The sneak shortcut exists because turning a radio off is the one thing worth doing without
+     * reading anything, and it stays server-authoritative like every other change. The panel, by
+     * contrast, opens purely on the clicking client — every value it shows is already synced on the
+     * block entity, so opening it needs nothing from the server (master plan §5.2).
      */
     @Override
     public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player,
                                  InteractionHand hand, BlockHitResult hit) {
-        if (level.isClientSide) {
-            return InteractionResult.SUCCESS;
-        }
         if (!(level.getBlockEntity(pos) instanceof RadioBlockEntity radio)) {
             return InteractionResult.PASS;
         }
 
         if (player.isShiftKeyDown()) {
-            Stations.Station next = Stations.next(radio.getStation());
-            radio.setStation(next.url());
-            // Changing station mid-play has to drop the old relay claim and take a new one, which
-            // RadioServer does by noticing the station no longer matches the one it is holding.
-            player.displayClientMessage(Component.literal(next.name()), true);
-        } else {
+            if (level.isClientSide) {
+                return InteractionResult.SUCCESS;
+            }
             radio.setPlaying(!radio.isPlaying());
             player.displayClientMessage(Component.literal(radio.isPlaying()
                     ? Stations.displayName(radio.getStation())
                     : "Off"), true);
+            return InteractionResult.CONSUME;
         }
-        return InteractionResult.CONSUME;
+
+        if (level.isClientSide) {
+            screenOpener.accept(radio);
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
     }
 
     /**

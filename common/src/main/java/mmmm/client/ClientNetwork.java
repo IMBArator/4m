@@ -1,5 +1,9 @@
 package mmmm.client;
 
+import net.minecraft.core.BlockPos;
+
+import java.util.function.Consumer;
+
 /**
  * Routes incoming media packets to {@link ClientMedia}.
  *
@@ -38,5 +42,32 @@ public final class ClientNetwork {
 
     public static void onClockPong(ClientMessages.ClockPong msg) {
         ClientMedia.onClockPong(msg.clientNanos(), msg.serverNanos());
+    }
+
+    // ------------------------------------------------------------------ outbound
+
+    /**
+     * How a {@link ClientMessages.ConfigureRadio} reaches the wire.
+     *
+     * <p>Installed by the loader's client setup, for the same reason the inbound direction is
+     * inverted: {@code RadioScreen} lives in shared code and must not name a loader's networking
+     * package (ADR-0002). A no-op default means a screen opened before setup — which cannot happen —
+     * would be inert rather than throw.
+     */
+    private static Consumer<ClientMessages.ConfigureRadio> configSender = msg -> { };
+
+    public static void setConfigSender(Consumer<ClientMessages.ConfigureRadio> sender) {
+        configSender = sender;
+    }
+
+    /**
+     * Asks the server to put a radio into this state.
+     *
+     * <p>The whole state goes every time, so the server has one idempotent path to validate. Nothing
+     * is applied locally: the block entity's synced values remain the only truth, which is what makes
+     * a refused change visibly snap back instead of leaving the screen lying.
+     */
+    public static void sendConfigure(BlockPos pos, String station, boolean playing, float volume) {
+        configSender.accept(new ClientMessages.ConfigureRadio(pos, station, playing, volume));
     }
 }

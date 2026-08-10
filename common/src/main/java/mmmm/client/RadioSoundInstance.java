@@ -82,6 +82,19 @@ public final class RadioSoundInstance extends AbstractTickableSoundInstance {
         this.ratePitch = (float) trim;
     }
 
+    /**
+     * Follows the block's synced volume, so the slider moves the sound without restarting it.
+     *
+     * <p>Nothing more is needed because {@code SoundEngine.tickNonPaused} recomputes
+     * {@code calculateVolume(instance)} for every ticking sound each tick and pushes the result to
+     * {@code Channel.setVolume}. Rebuilding the instance to change loudness would tear down and
+     * re-create the OpenAL stream, which is audible as a gap and would drop the buffered audio the
+     * whole sync design depends on.
+     */
+    public void setVolume(float volume) {
+        this.volume = volume;
+    }
+
     @Override
     public void tick() {
         ClientMediaSession session = ClientMedia.sessionForBlock(pos);

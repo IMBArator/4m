@@ -7,6 +7,7 @@ import mmmm.core.media.Codec;
 import mmmm.core.media.MediaFrame;
 import mmmm.core.media.StreamInfo;
 import mmmm.server.PlayerSubscriber;
+import mmmm.server.ServerNetwork;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
@@ -66,6 +67,9 @@ public final class MmmmNetwork {
                 MmmmNetwork::encodeClockPong, MmmmNetwork::decodeClockPong, MmmmNetwork::handleClockPong);
         CHANNEL.registerMessage(++id, ClientMessages.ClockPing.class,
                 MmmmNetwork::encodeClockPing, MmmmNetwork::decodeClockPing, MmmmNetwork::handleClockPing);
+        CHANNEL.registerMessage(++id, ClientMessages.ConfigureRadio.class,
+                MmmmNetwork::encodeConfigureRadio, MmmmNetwork::decodeConfigureRadio,
+                MmmmNetwork::handleConfigureRadio);
     }
 
     // ------------------------------------------------------------------ sends
@@ -188,6 +192,39 @@ public final class MmmmNetwork {
             sendToPlayer(new ClientMessages.ClockPong(msg.clientNanos(), System.nanoTime()), sender);
         }
         ctx.get().setPacketHandled(true);
+    }
+
+    // ------------------------------------------------------------------ ConfigureRadio (C2S)
+
+    /**
+     * Wire cap on a station URL. Well past any real one, well under {@code readUtf}'s 32767 default —
+     * this is the only client-supplied string the server stores, so it gets an explicit bound.
+     */
+    private static final int MAX_STATION_LENGTH = 512;
+
+    private static void encodeConfigureRadio(ClientMessages.ConfigureRadio msg, FriendlyByteBuf buf) {
+        buf.writeBlockPos(msg.pos());
+        buf.writeUtf(msg.station(), MAX_STATION_LENGTH);
+        buf.writeBoolean(msg.playing());
+        buf.writeFloat(msg.volume());
+    }
+
+    private static ClientMessages.ConfigureRadio decodeConfigureRadio(FriendlyByteBuf buf) {
+        return new ClientMessages.ConfigureRadio(
+                buf.readBlockPos(),
+                buf.readUtf(MAX_STATION_LENGTH),
+                buf.readBoolean(),
+                buf.readFloat());
+    }
+
+    private static void handleConfigureRadio(ClientMessages.ConfigureRadio msg,
+                                             Supplier<NetworkEvent.Context> ctx) {
+        NetworkEvent.Context context = ctx.get();
+        // enqueueWork, unlike handleClockPing above. That one stays on the network thread on purpose;
+        // this one reads and writes block entities and world data, which is server-thread-only, and
+        // doing it here would be a data race that shows up as corrupt saves rather than as an error.
+        context.enqueueWork(() -> ServerNetwork.onConfigureRadio(context.getSender(), msg));
+        context.setPacketHandled(true);
     }
 
     // ------------------------------------------------------------------ serialisation helpers

@@ -1,17 +1,26 @@
 package mmmm.server;
 
+import com.mojang.logging.LogUtils;
+import mmmm.Stations;
 import mmmm.block.RadioBlockEntity;
 import mmmm.core.relay.RelayManager;
 import mmmm.core.relay.RelaySession;
+import mmmm.core.relay.SessionState;
+import mmmm.core.security.EgressGuard;
 import mmmm.core.transport.MediaTransport;
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import org.slf4j.Logger;
 
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -52,7 +61,41 @@ public final class RadioServer {
     /** Proximity is recomputed at this interval. Players do not move 8 blocks in a second. */
     private static final int PROXIMITY_INTERVAL_TICKS = 20;
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     private static RelayManager manager;
+    private static MinecraftServer server;
+
+    /** What any player may reach: the shipped stations, and nothing else. */
+    private static final EgressGuard SHIPPED = EgressGuard.allowing(Stations.allowedHosts());
+
+    /**
+     * What a station an operator has authorised may reach: any public host, ranges still blocked.
+     *
+     * <p>This is wider than "the host the operator typed", and it has to be. A station URL is
+     * normally a playlist that names an endpoint on a different domain — {@code radiobob.de} sends
+     * you to {@code regiocast.streamabc.net} — and that endpoint's hostname can vary between
+     * requests, so it cannot be enumerated in advance. Authorising only the typed host makes the
+     * feature refuse nearly every real station, which is exactly what it did on first use.
+     *
+     * <p>The security delta is small and worth being explicit about. The operator has already chosen
+     * to stream from a host they do not control the contents of; letting that host's playlist name a
+     * second <em>public</em> host adds little. What actually protects the server — refusal of
+     * loopback, RFC1918, CGNAT and link-local, including the cloud metadata endpoint — is unchanged
+     * and applies to every hop of the chain. That is why ADR-0011 keeps range blocking as a separate
+     * layer rather than folding it into the allowlist.
+     */
+    private static final EgressGuard OPERATOR_AUTHORISED = EgressGuard.allowingAnyPublicHost();
+
+    /**
+     * Hosts an operator has authorised, snapshotted for the relay threads.
+     *
+     * <p>A field rather than a lookup, and not as an optimisation: the relay threads ask when they
+     * connect, and answering means reading the world's {@link RadioAllowlist} through
+     * {@code DimensionDataStorage}, which is not thread-safe. So it is refreshed on the server thread
+     * and read as an immutable snapshot everywhere else.
+     */
+    private static volatile Set<String> authorisedHosts = Set.of();
 
     /**
      * Players who should be receiving each session, accumulated during a proximity round.
@@ -68,12 +111,63 @@ public final class RadioServer {
     private RadioServer() {
     }
 
-    public static void install(RelayManager relayManager) {
+    public static void install(MinecraftServer minecraftServer, RelayManager relayManager) {
+        server = minecraftServer;
         manager = relayManager;
+        refreshAuthorisedHosts();
     }
 
     public static RelayManager manager() {
         return manager;
+    }
+
+    /**
+     * The policy a given station connects under.
+     *
+     * <p>Safe to call from any thread; see {@link #authorisedHosts}.
+     *
+     * <p>Keyed on the station a player entered, not on the host finally reached — the two differ for
+     * most real stations, and the authorisation was granted for the former.
+     */
+    public static EgressGuard egressGuardFor(URI station) {
+        String host = station.getHost();
+        if (host != null && authorisedHosts.contains(host.toLowerCase(Locale.ROOT))) {
+            return OPERATOR_AUTHORISED;
+        }
+        return SHIPPED;
+    }
+
+    /**
+     * Permits a host for this world, from now on and across restarts.
+     *
+     * <p>Server thread only — it writes world data. Callers must already have established that the
+     * player is allowed to do this; this method is the mechanism, not the policy.
+     *
+     * @return false if the list is full or there is no world to record it against
+     */
+    public static boolean authoriseHost(String host) {
+        if (server == null) {
+            return false;
+        }
+        if (!RadioAllowlist.get(server).authorise(host)) {
+            return false;
+        }
+        refreshAuthorisedHosts();
+        return true;
+    }
+
+    /**
+     * Server thread only — {@link RadioAllowlist} reads world data.
+     *
+     * <p>Both server types load their levels before firing {@code ServerStartingEvent}, so the
+     * overworld is there when {@link #install} calls this. The empty fallback is for the case where
+     * that stops being true: no authorisations means only the shipped stations work, which is the
+     * direction a security default should fail in.
+     */
+    private static void refreshAuthorisedHosts() {
+        authorisedHosts = server == null || server.overworld() == null
+                ? Set.of()
+                : RadioAllowlist.get(server).hosts();
     }
 
     /** Closes every upstream connection. Server stop, and world unload in singleplayer. */
@@ -82,6 +176,8 @@ public final class RadioServer {
             manager.close();
             manager = null;
         }
+        server = null;
+        authorisedHosts = Set.of();
         desired.clear();
         proximityRoundOpen = false;
     }
@@ -109,6 +205,11 @@ public final class RadioServer {
 
         if (!radio.isPlaying()) {
             release(radio);
+            // A FAILED state is left standing on purpose: it is the only explanation the player gets
+            // for why the radio stopped by itself, and clearing it here would erase that a tick later.
+            if (radio.getSessionState() != SessionState.FAILED) {
+                radio.setSessionState(null);
+            }
             return;
         }
 
@@ -117,6 +218,7 @@ public final class RadioServer {
             // An unparseable URL cannot be retried into working, and leaving the block "playing"
             // would retry it every tick forever.
             radio.setPlaying(false);
+            radio.setSessionState(SessionState.FAILED);
             release(radio);
             return;
         }
@@ -128,6 +230,20 @@ public final class RadioServer {
             radio.setServerSession(session, wanted);
         }
         radio.setSessionId(session.sessionId());
+        radio.setSessionState(session.state());
+
+        if (session.state() == SessionState.FAILED) {
+            // FAILED is terminal by design — the relay does not retry a refused destination or an
+            // undecodable stream, because retrying cannot fix either. Without this the block would
+            // sit "playing" forever, holding a session that will never produce a byte, and the only
+            // symptom would be silence.
+            LOGGER.warn("Radio at {} stopped: station {} failed permanently ({})",
+                    radio.getBlockPos(), wanted, session.lastError());
+            notifyConfigurer(radio, session.lastError());
+            radio.setPlaying(false);
+            release(radio);
+            return;
+        }
 
         if (level.getGameTime() % PROXIMITY_INTERVAL_TICKS == 0) {
             collectListeners(level, radio, session);
@@ -151,6 +267,27 @@ public final class RadioServer {
             if (player.distanceToSqr(x, y, z) <= limit) {
                 forSession.add(subscriber);
             }
+        }
+    }
+
+    /**
+     * Tells whoever last configured this radio why it stopped.
+     *
+     * <p>The relay discovers the failure seconds after the player asked for it, on another thread,
+     * so there is nothing to return from the packet handler. Without this the only account of what
+     * went wrong is a line in the server log, which the player cannot see — and "Failed" on the
+     * screen with no reason is barely better than silence.
+     */
+    private static void notifyConfigurer(RadioBlockEntity radio, String error) {
+        UUID who = radio.getLastConfiguredBy();
+        if (who == null || server == null) {
+            return;
+        }
+        ServerPlayer player = server.getPlayerList().getPlayer(who);
+        if (player != null) {
+            player.sendSystemMessage(Component.literal("Radio stopped: "
+                    + (error == null ? "the station could not be played." : error))
+                    .withStyle(ChatFormatting.RED));
         }
     }
 
