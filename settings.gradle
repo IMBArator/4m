@@ -20,4 +20,17 @@ include 'core'
 // Loader entry points. Both pull in ../common as a source directory (ADR-0002),
 // so there is no ':common' project to include here.
 include 'forge'
-include 'neoforge'
+
+// TEMPORARILY DISABLED. neoforge/build.gradle targets the wrong NeoGradle line for 1.20.1 and
+// cannot configure, which fails the whole build rather than just this project:
+//
+//   * net.neoforged.gradle.userdev 7.x is for 1.20.2+. The 1.20.1 plugin is a different id,
+//     net.neoforged.gradle 6.0.x, or ModDevGradle 2's net.neoforged.moddev.legacyforge.
+//   * org.parchmentmc.librarian.forgegradle is a ForgeGradle integration and throws
+//     NoClassDefFoundError: net/minecraftforge/gradle/mcp/ChannelProvider under NeoGradle.
+//   * org.spongepowered.mixin 0.7 needs ForgeGradle's `reobf` extension (neoforged/MDK#75).
+//   * NeoForge 1.20.1 still runs on SRG names, and NeoGradle 7 has no reobf step at all.
+//
+// Re-enable together with that repair. NeoForge 47.1.106 is still the Forge 47.1 fork — same
+// net.minecraftforge.* packages, same modId="forge" — so the mod source itself needs no change.
+//include 'neoforge'
