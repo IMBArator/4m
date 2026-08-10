@@ -1,5 +1,7 @@
 package mmmm;
 
+import net.minecraft.resources.ResourceLocation;
+
 /**
  * Constants shared by every module, loader-agnostic.
  *
@@ -9,6 +11,11 @@ package mmmm;
 public final class Mmmm {
 
     public static final String MOD_ID = "mmmm";
+
+    /** Convenience for the many {@code mmmm:…} identifiers this mod builds. */
+    public static ResourceLocation id(String path) {
+        return new ResourceLocation(MOD_ID, path);
+    }
 
     private Mmmm() {
     }
