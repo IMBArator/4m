@@ -2,8 +2,8 @@
 	"credit": "Made with Blockbench",
 	"texture_size": [32, 32],
 	"textures": {
-		"2": "4m:block/radio",
-		"particle": "4m:block/radio"
+		"2": "mmmm:block/radio",
+		"particle": "mmmm:block/radio"
 	},
 	"elements": [
 		{
