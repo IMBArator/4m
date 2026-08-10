@@ -30,8 +30,11 @@ dependencies {
 // accident with an innocent-looking import.
 tasks.register('checkServerSideHasNoCodecDeps') {
     group = 'verification'
-    description = 'Fails if core/source, core/frame or core/transport import a decoder library.'
-    def serverDirs = ['source', 'frame', 'transport'].collect {
+    description = 'Fails if a server-side package imports a decoder library.'
+    // core/relay is the package that actually runs on a dedicated server, so it matters most here:
+    // a decoder import there would put a codec on the server classpath, which ADR-0004 exists to
+    // prevent. The other three are the layers it is built from.
+    def serverDirs = ['source', 'frame', 'transport', 'relay'].collect {
         file("src/main/java/mmmm/core/${it}")
     }
     doLast {
