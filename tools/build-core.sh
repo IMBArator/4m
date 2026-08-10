@@ -9,6 +9,8 @@
 #   ./tools/build-core.sh              compile and run the tests
 #   ./tools/build-core.sh probe <url> [seconds] [out-file]
 #                                      run the pipeline against a real station
+#   ./tools/build-core.sh decode <url-or-file> <out.wav> [seconds]
+#                                      decode to a .wav and listen to it
 #
 # Set JAVA_HOME to a JDK 17 (Debian 13 ships no openjdk-17-jdk; see the README for how to get one
 # without root). Downloads land in .build/ and are cached.
@@ -19,6 +21,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="$ROOT/.build"
 JUNIT_VERSION="1.10.2"
 JUNIT_JAR="$BUILD/junit-platform-console-standalone-${JUNIT_VERSION}.jar"
+# ADR-0010: JLayer is compileOnly in :core — the server never decodes — but core/codec needs it
+# on the compile classpath, and the decode tool needs it at runtime.
+JLAYER_VERSION="1.0.1"
+JLAYER_JAR="$BUILD/jlayer-${JLAYER_VERSION}.jar"
 
 if [[ -n "${JAVA_HOME:-}" ]]; then
     JAVAC="$JAVA_HOME/bin/javac"
@@ -41,10 +47,18 @@ fi
 
 mkdir -p "$BUILD/main" "$BUILD/test"
 
+fetch_jlayer() {
+    [[ -f "$JLAYER_JAR" ]] && return
+    echo ">> fetching JLayer $JLAYER_VERSION"
+    curl -sSL -o "$JLAYER_JAR" \
+        "https://repo1.maven.org/maven2/javazoom/jlayer/${JLAYER_VERSION}/jlayer-${JLAYER_VERSION}.jar"
+}
+
 compile_main() {
+    fetch_jlayer
     find "$ROOT/core/src/main/java" -name '*.java' > "$BUILD/main-sources.txt"
     echo ">> compiling $(wc -l < "$BUILD/main-sources.txt" | tr -d ' ') main sources"
-    "$JAVAC" -Xlint:all -Werror -d "$BUILD/main" @"$BUILD/main-sources.txt"
+    "$JAVAC" -Xlint:all -Werror -cp "$JLAYER_JAR" -d "$BUILD/main" @"$BUILD/main-sources.txt"
 }
 
 fetch_junit() {
@@ -59,7 +73,13 @@ case "${1:-test}" in
         shift
         [[ $# -ge 1 ]] || { echo "usage: $0 probe <url> [seconds] [out-file]" >&2; exit 2; }
         compile_main
-        exec "$JAVA" -cp "$BUILD/main" mmmm.core.tools.StreamProbe "$@"
+        exec "$JAVA" -cp "$BUILD/main:$JLAYER_JAR" mmmm.core.tools.StreamProbe "$@"
+        ;;
+    decode)
+        shift
+        [[ $# -ge 2 ]] || { echo "usage: $0 decode <url-or-file> <out.wav> [seconds]" >&2; exit 2; }
+        compile_main
+        exec "$JAVA" -cp "$BUILD/main:$JLAYER_JAR" mmmm.core.tools.DecodeProbe "$@"
         ;;
     compile)
         compile_main
@@ -69,14 +89,14 @@ case "${1:-test}" in
         fetch_junit
         find "$ROOT/core/src/test/java" -name '*.java' > "$BUILD/test-sources.txt"
         echo ">> compiling $(wc -l < "$BUILD/test-sources.txt" | tr -d ' ') test sources"
-        "$JAVAC" -Xlint:all -cp "$BUILD/main:$JUNIT_JAR" -d "$BUILD/test" @"$BUILD/test-sources.txt"
+        "$JAVAC" -Xlint:all -cp "$BUILD/main:$JUNIT_JAR:$JLAYER_JAR" -d "$BUILD/test" @"$BUILD/test-sources.txt"
         echo ">> running tests"
         exec "$JAVA" -jar "$JUNIT_JAR" execute \
-            --class-path "$BUILD/main:$BUILD/test" \
+            --class-path "$BUILD/main:$BUILD/test:$JLAYER_JAR" \
             --scan-class-path --details=summary --disable-ansi-colors
         ;;
     *)
-        echo "usage: $0 [test|compile|probe <url> [seconds] [out-file]]" >&2
+        echo "usage: $0 [test|compile|probe <url> [seconds] [out-file]|decode <url-or-file> <out.wav> [seconds]]" >&2
         exit 2
         ;;
 esac
