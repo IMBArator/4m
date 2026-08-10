@@ -10,8 +10,16 @@ Video streaming is planned. The core is built media-neutral for it — see
 [ADR-0006](docs/adr/0006-media-over-minecraft-connection.md) and `docs/adr/`.
 
 > **Status: early development.** The `:core` pipeline is built and verified headlessly — 123 unit
-> tests, and the server-side path validated against live MP3, AAC and Ogg Vorbis stations. No
-> Minecraft integration yet, so nothing is playable in-game.
+> tests, and the server-side path validated against live MP3, AAC and Ogg Vorbis stations.
+>
+> The Forge module now builds and loads in-game: there is a craftable, placeable **radio block**
+> (model ported from a 2022 Forge 1.18.2 prototype). It is furniture — **no block entity and no
+> audio yet**. That is the next milestone.
+>
+> **NeoForge is temporarily out of the build.** `neoforge/build.gradle` targets NeoGradle 7, which
+> is 1.20.2+; 1.20.1 needs NeoGradle 6 or ModDevGradle's legacy plugin, and the project could not
+> even configure. It is commented out of `settings.gradle`, which explains the details. The mod
+> source needs no change for it — NeoForge 47.1.106 is still the Forge 47.1 fork.
 
 ## Verified so far
 
@@ -172,14 +180,12 @@ The full build, once the toolchain is in place:
 ```bash
 ./gradlew :core:test
 ./gradlew :forge:build
-./gradlew :neoforge:build
-./gradlew build               # both loaders; CI must run this, not just one
+./gradlew :forge:runClient
 ```
 
-```bash
-./gradlew :forge:runClient
-./gradlew :neoforge:runClient
-```
+`:neoforge` is commented out of `settings.gradle` until its build file is moved to a toolchain that
+supports 1.20.1 — until then `./gradlew build` covers Forge only. Once it is back, CI must run both
+loaders, not just one (ADR-0002).
 
 ## Architecture decisions
 
