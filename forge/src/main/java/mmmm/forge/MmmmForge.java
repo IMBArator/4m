@@ -1,22 +1,132 @@
 package mmmm.forge;
 
 import mmmm.Mmmm;
+import mmmm.MmmmContent;
+import mmmm.Stations;
+import mmmm.block.RadioBlock;
+import mmmm.client.ClientMedia;
+import mmmm.client.ClientMessages;
+import mmmm.core.relay.RelayConfig;
+import mmmm.core.relay.RelayManager;
+import mmmm.core.relay.SourceOpener;
+import mmmm.core.security.EgressGuard;
+import mmmm.core.source.SourceConfig;
+import mmmm.server.RadioServer;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
-import net.minecraftforge.eventbus.api.IEventBus;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.event.server.ServerStartingEvent;
+import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
+import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.eventbus.api.IEventBus;
 
-/** Forge entry point. */
+/**
+ * Forge entry point.
+ *
+ * <p>One job: install the registries, the network channel and the event listeners that drive
+ * server- and client-side state, then get out of the way. Everything else lives in shared code
+ * under {@code common/} and {@code :core}.
+ *
+ * <p>Listeners are split across the two event buses by Forge's rule: {@code IModBusEvent}s go on
+ * the mod bus (registries, setup); gameplay-tick and lifecycle events go on the Forge bus. Putting
+ * them on the wrong bus is a silent no-op, which is the kind of bug that takes an evening to find.
+ */
 @Mod(Mmmm.MOD_ID)
 public final class MmmmForge {
 
     public MmmmForge() {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
+
         Registration.BLOCKS.register(modBus);
         Registration.ITEMS.register(modBus);
+        Registration.BLOCK_ENTITIES.register(modBus);
+        Registration.SOUND_EVENTS.register(modBus);
+
+        modBus.addListener(MmmmForge::commonSetup);
+        modBus.addListener(MmmmForge::clientSetup);
         modBus.addListener(MmmmForge::addCreativeTabContents);
+
+        IEventBus forgeBus = MinecraftForge.EVENT_BUS;
+        forgeBus.addListener(MmmmForge::serverTick);
+        forgeBus.addListener(MmmmForge::serverStarting);
+        forgeBus.addListener(MmmmForge::serverStopping);
+        forgeBus.addListener(MmmmForge::playerLoggedOut);
+        forgeBus.addListener(MmmmForge::clientTick);
+        // NOTE: ClientPlayerNetworkEvent.LoggingOut is NOT hooked here. In singleplayer it fires
+        // spuriously (on ESC pause, on auto-save, during dimension change), and calling shutdown()
+        // on each fire wipes every active session. The stale sweep in ClientMedia.onClientTick
+        // already handles real cleanup: when the player leaves the world, block entities stop
+        // ticking, and sessions are reaped after the grace period.
     }
+
+    // ------------------------------------------------------------------ setup
+
+    private static void commonSetup(FMLCommonSetupEvent event) {
+        // The channel must be registered before any packet could possibly be sent. Common setup is
+        // well before play, so this is conservative.
+        MmmmNetwork.register();
+
+        // Hand the registry objects to the shared code that needs them. DeferredRegister entries
+        // are populated by the time common setup fires.
+        MmmmContent.bind(Registration.RADIO_BLOCK_ENTITY, Registration.RADIO_STREAM);
+    }
+
+    private static void clientSetup(FMLClientSetupEvent event) {
+        // The block entity ticker is how shared code reaches the client audio path without the
+        // dedicated server ever loading a {@code net.minecraft.client.*} class.
+        RadioBlock.setClientTicker(ClientMedia::tickBlock);
+        // And the ping sender is how shared code sends a clock ping without referencing a loader's
+        // networking package. The body constructs the loader-specific message.
+        ClientMedia.setPingSender(clientNanos ->
+                MmmmNetwork.sendToServer(new ClientMessages.ClockPing(clientNanos)));
+    }
+
+    // ------------------------------------------------------------------ server lifecycle
+
+    private static void serverStarting(ServerStartingEvent event) {
+        // Fresh manager per server run. RadioServer.shutdown() nulls the previous one, so without
+        // this a singleplayer world loaded after another would have no relay at all.
+        SourceOpener opener = SourceOpener.network(
+                EgressGuard.allowing(Stations.allowedHosts()),
+                SourceConfig.DEFAULT);
+        RadioServer.install(new RelayManager(opener, RelayConfig.DEFAULT, new ForgeMediaTransport()));
+    }
+
+    private static void serverStopping(ServerStoppingEvent event) {
+        RadioServer.shutdown();
+    }
+
+    private static void serverTick(TickEvent.ServerTickEvent event) {
+        // END, not START: every block entity has ticked by then, so the proximity union this tick
+        // assembled is complete and can be applied. Doing it at START would apply last tick's set.
+        if (event.phase == TickEvent.Phase.END) {
+            RadioServer.serverTick();
+        }
+    }
+
+    private static void playerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        // PlayerEvent#getEntity is typed Player already, so no cast is needed — and a pattern
+        // variable would not compile against it (Java rejects a pattern whose declared type is a
+        // supertype of the expression).
+        if (event.getEntity() != null) {
+            RadioServer.playerLeft(event.getEntity().getUUID());
+        }
+    }
+
+    // ------------------------------------------------------------------ client lifecycle
+
+    private static void clientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase == TickEvent.Phase.END) {
+            ClientMedia.onClientTick();
+        }
+    }
+
+    // ------------------------------------------------------------------ creative tab
 
     /**
      * One block does not justify a creative tab of its own; it goes in a vanilla one. Revisit once

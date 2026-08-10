@@ -1,0 +1,11 @@
+{
+  "radio_stream": {
+    "category": "record",
+    "sounds": [
+      {
+        "name": "mmmm:radio_stream",
+        "stream": true
+      }
+    ]
+  }
+}
