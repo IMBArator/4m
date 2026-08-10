@@ -3,7 +3,7 @@
     "category": "record",
     "sounds": [
       {
-        "name": "mmmm:radio_stream",
+        "name": "4m:radio_stream",
         "stream": true
       }
     ]

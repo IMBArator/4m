@@ -10,7 +10,7 @@ import net.minecraft.resources.ResourceLocation;
  */
 public final class Mmmm {
 
-    public static final String MOD_ID = "mmmm";
+    public static final String MOD_ID = "4m";
 
     /** Convenience for the many {@code mmmm:…} identifiers this mod builds. */
     public static ResourceLocation id(String path) {
