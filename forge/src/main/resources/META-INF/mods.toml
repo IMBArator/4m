@@ -1,0 +1,28 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="${modLicense}"
+
+[[mods]]
+modId="${modId}"
+version="${modVersion}"
+displayName="${modName}"
+authors="${modAuthors}"
+description='''${modDescription}'''
+
+# NOTE: the version range is a literal [47,) and NOT ${forgeVersion} on purpose. The two loader
+# modules feed that property different values (47.4.0 for Forge, 47.1.106 for NeoForge), so a
+# concrete range here would make one of the two refuse to load. NeoForge 47.1.x is still the
+# Forge 47.1 fork and still declares modId "forge" — the rename landed in NeoForge 20.2.
+[[dependencies.${modId}]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${modId}]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="BOTH"
