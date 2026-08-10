@@ -54,7 +54,8 @@ dependencies {
     }
     implementation "javazoom:jlayer:${jlayerVersion}"
 
-    shade "net.sourceforge.jaadec:jaad:${jaadVersion}"
+    // TODO(4b): unresolvable coordinates — see the note in core/build.gradle.
+    //shade "net.sourceforge.jaadec:jaad:${jaadVersion}"
 }
 
 jarJar.enable()

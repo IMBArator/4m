@@ -10,7 +10,11 @@ plugins {
 // packaging split (JiJ vs shade, ADR-0010).
 dependencies {
     compileOnly "javazoom:jlayer:${jlayerVersion}"
-    compileOnly "net.sourceforge.jaadec:jaad:${jaadVersion}"
+    // TODO(4b): net.sourceforge.jaadec:jaad:0.8.6 does not exist on Maven Central — that path
+    // 404s, as do org.jaadec:jaad and net.sourceforge.jaad:jaad. Find the real coordinates (or
+    // another AAC decoder) when the decoders land. Nothing imports it yet: core/codec is empty,
+    // and the AAC work in :core is ADTS *header* parsing, which is hand-written.
+    //compileOnly "net.sourceforge.jaadec:jaad:${jaadVersion}"
 
     testImplementation platform("org.junit:junit-bom:${junitVersion}")
     testImplementation 'org.junit.jupiter:junit-jupiter'
@@ -18,7 +22,7 @@ dependencies {
 
     // Tests exercise the decoders, so they need them at runtime.
     testImplementation "javazoom:jlayer:${jlayerVersion}"
-    testImplementation "net.sourceforge.jaadec:jaad:${jaadVersion}"
+    //testImplementation "net.sourceforge.jaadec:jaad:${jaadVersion}"
 }
 
 // Guard rail for ADR-0004: fail the build if server-side packages ever import a
