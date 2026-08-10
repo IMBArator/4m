@@ -16,9 +16,10 @@ Superseding a decision means a new record that references the old one; the old f
 | [0009](0009-hand-rolled-icy-http-client.md) | Hand-rolled HTTP/ICY client instead of a JDK HTTP client | Accepted |
 | [0010](0010-decoder-libraries-and-packaging.md) | JLayer via Jar-in-Jar, JAADec shaded, STB Vorbis reused | Accepted |
 | [0011](0011-egress-allowlist.md) | Default-deny egress allowlist on the server | Accepted |
+| [0012](0012-naming-and-identifiers.md) | Call the product 4M, keep `mmmm` as the mod id | Accepted |
 
 ## Reading order
 
 0003 is the keystone — it decides that the server relays, and 0004, 0005, 0006 and 0011 all follow
 from it. 0007, 0008 and 0009 are independent implementation decisions that would hold under any
-transport choice.
+transport choice. 0012 stands alone and is worth reading before touching any identifier.

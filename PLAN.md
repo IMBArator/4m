@@ -1,4 +1,4 @@
-# mmmm — implementation plan
+# 4M — implementation plan
 
 Synchronised web radio for Minecraft 1.20.1. This is the working plan: what is built, what is next,
 and the reasoning that is not recoverable from the diff.
@@ -139,7 +139,7 @@ stations lie about it constantly.
 
 ### 4.3 `RelaySession` — one per station, and where the epoch comes from
 
-A daemon thread `mmmm-relay-<n>` runs source → parse → fan-out. **This is the part of the design
+A daemon thread `4m-relay-<n>` runs source → parse → fan-out. **This is the part of the design
 that changed during implementation, and it matters.**
 
 Clients render the frame stamped `pts` at server time `epoch + pts`. The obvious way to place that
@@ -468,7 +468,7 @@ produce PCM of exactly the right length.
 3. Two blocks, same station → one upstream socket (`ss -tp | grep java`), audio identical.
 4. ESC-pause 30 s, resume → audio is **live**, not stale.
 5. `F3+T` resource reload → audio recovers.
-6. Break the block → last one closes the upstream; no `mmmm-relay-*` or `mmmm-decode-*` threads
+6. Break the block → last one closes the upstream; no `4m-relay-*` or `4m-decode-*` threads
    survive (`jstack`).
 7. Kill upstream connectivity → `RECONNECTING`, recovers on restore.
 
@@ -526,6 +526,15 @@ Full records in [`docs/adr/`](docs/adr/), MADR 4.0.0.
 | 0009 | Hand-rolled HTTP/ICY client instead of a JDK HTTP client | Accepted |
 | 0010 | JLayer via Jar-in-Jar, JAADec shaded, STB Vorbis reused | Accepted |
 | 0011 | Default-deny egress allowlist on the server | Accepted |
+| 0012 | Call the product 4M, keep `mmmm` as the mod id | Accepted |
+
+**On naming (ADR-0012).** The product is **4M**; the mod id, resource namespace and Java package root
+are all **`mmmm`**. Forge validates mod ids against `^[a-z][a-z0-9_]{1,63}$` and throws
+`InvalidModFileException` on a leading digit, so `4m` cannot be one — and Java packages cannot start
+with a digit either. Minecraft resource namespaces *do* accept `4m`, which makes it a trap: the assets
+validate cleanly and only FML objects. `mmmm` is the four Ms of *Minecraft Multi Media Mod*, so the
+identifier and the brand say the same thing. Rule: anything a registry, loader or compiler parses is
+`mmmm`; anything a human reads — display name, thread names, `User-Agent`, pack description — is 4M.
 
 **Amendment pending on ADR-0007** (§7.3). The decision stands; the mechanism is simpler than recorded.
 Forge patches `SoundInstance.getStream(SoundBufferLibrary, Sound, boolean)` and `SoundEngine.play`

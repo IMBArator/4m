@@ -1,4 +1,4 @@
-# mmmm — Multimedia Minecraft Mod
+# 4M — M&N's Minecraft Multi Media Mod
 
 Synchronised web radio for Minecraft **1.20.1**, on **Forge** and **NeoForge**.
 

@@ -8,7 +8,7 @@ date: 2026-08-08
 ## Context and Problem Statement
 
 Minecraft moved to year-based versioning in December 2025, and 26.1 shipped in March 2026. Which
-version does mmmm target first?
+version does 4M target first?
 
 ## Decision Drivers
 

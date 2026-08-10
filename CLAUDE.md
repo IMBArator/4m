@@ -1,7 +1,12 @@
-# mmmm
+# 4M — M&N's Minecraft Multi Media Mod
 
 Synchronised web radio for Minecraft 1.20.1. See `README.md` for what it is and
 `docs/adr/` for why it is built the way it is.
+
+The product is **4M**; the mod id, resource namespace and Java package root are all **`mmmm`** —
+Forge rejects mod ids that start with a digit, so `4m` cannot be one. See
+[ADR-0012](docs/adr/0012-naming-and-identifiers.md) before touching any identifier. Rule of thumb:
+anything a registry, loader or compiler parses is `mmmm`; anything a human reads is 4M.
 
 ## Commits
 
