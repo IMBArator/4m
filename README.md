@@ -9,12 +9,23 @@ than each client landing at a different point in the station's buffer.
 Video streaming is planned. The core is built media-neutral for it — see
 [ADR-0006](docs/adr/0006-media-over-minecraft-connection.md) and `docs/adr/`.
 
-> **Status: early development.** The `:core` pipeline is built and verified headlessly — 123 unit
-> tests, and the server-side path validated against live MP3, AAC and Ogg Vorbis stations.
+> **Status: working, unfinished.**
 >
-> The Forge module now builds and loads in-game: there is a craftable, placeable **radio block**
-> (model ported from a 2022 Forge 1.18.2 prototype). It is furniture — **no block entity and no
-> audio yet**. That is the next milestone.
+> **Playing.** A craftable, placeable radio block streams MP3 stations through the server and out
+> of the vanilla sound engine as positional mono audio. Right-clicking opens a panel with
+> play/stop, a station picker, and a volume slider whose value lives on the block and reaches every
+> client. Operators can enter a custom station URL; everyone else sees the field disabled.
+> `/mmmm stop [radius]` switches off every radio in range.
+>
+> **Verified.** The `:core` unit suite, the server pipeline validated against live MP3, AAC and Ogg
+> Vorbis stations, and the produced jar booted on a real dedicated server by
+> `tools/check-server-jar.sh`. A 30-minute single-client soak held drift inside ±6 ms with no
+> underruns.
+>
+> **Not done.** The measurement the project exists for — two clients, two machines, one server,
+> both audible — has not been run; a single machine cannot exercise the rate trim, because the two
+> clients share one sound card and therefore one clock. Client-side **AAC and Ogg Vorbis decode**
+> are not wired up, so only MP3 stations play. Video has not started.
 >
 > **NeoForge is temporarily out of the build.** `neoforge/build.gradle` targets NeoGradle 7, which
 > is 1.20.2+; 1.20.1 needs NeoGradle 6 or ModDevGradle's legacy plugin, and the project could not
@@ -44,74 +55,99 @@ Two findings from that testing worth knowing before touching this code:
   flag does not mean the audio starts at zero. Reading it as absolute put the second frame two
   minutes after the first. See `OggFrameParser.ANCHOR_THRESHOLD_SECONDS`.
 
+Client-side playback is instrumented rather than eyeballed. With `debug.syncReadout` enabled, the
+radio panel carries a line reading `drift ±… · buf … · trim …ppm · rtt … · resync …`, and
+`debug.syncLog` writes the same figures to the client log once a second. Both are in the client
+config. Every sync defect found so far was found by reading that line, not by listening.
+
 ---
 
-## Build prerequisites
+## Building
 
-The build needs a **JDK 17** and **Gradle 8.x**. Neither is currently installed on this machine —
-see [Toolchain setup](#toolchain-setup) below, which also explains why `apt` alone will not do it.
+Everything below needs **JDK 17** on `JAVA_HOME`. Minecraft 1.20.1 targets Java 17, and
+ForgeGradle 6 is not reliable on 21+. See [Toolchain setup](#toolchain-setup) — a plain `apt
+install` cannot supply it on Debian 13.
 
-| Tool | Version | Why |
-|---|---|---|
-| JDK | **17** | Minecraft 1.20.1 targets Java 17. ForgeGradle 6 is not reliable on 21+. |
-| Gradle | **8.1.1+** | Required by ForgeGradle 6 / NeoGradle 7. Use the wrapper. |
+```bash
+export JAVA_HOME=~/.jdks/$(ls ~/.jdks | grep jdk-17)
+```
 
-## Runtime dependencies
+### The fast loop
 
-### Client only
+`:core` is plain Java and needs none of the Minecraft toolchain, so the media pipeline and the sync
+algorithm can be compiled and tested with a JDK alone — no Gradle, no Forge, seconds instead of
+minutes:
 
-Decoders never run on the server (see [ADR-0004](docs/adr/0004-relay-codec-frames.md)), so they are
-declared `compileOnly` in `:core` and put on the client runtime classpath by the loader modules.
+```bash
+./tools/build-core.sh                                              # compile + run the tests
+./tools/build-core.sh probe https://somafm.com/groovesalad.pls 20 out.mp3
+```
 
-| Dependency | Coordinates | Purpose | Licence | How it ships |
-|---|---|---|---|---|
-| JLayer | `javazoom:jlayer:1.0.1` | MP3 decode | **LGPL-2.1** | **Jar-in-Jar, unmodified and unrelocated.** Relocating it would undermine the LGPL's separate-replaceability condition. |
-| JAADec | `net.sourceforge.jaadec:jaad:0.8.6` | AAC / HE-AAC decode | Public Domain | Shaded and relocated to `mmmm.shaded.jaad` |
-| STB Vorbis | — | Ogg Vorbis decode | — | **No dependency.** Reuses Minecraft's own `OggAudioStream` via LWJGL. |
-| Mixin | provided by loader | Hooks `SoundBufferLibrary#getStream` | — | Already present on both loaders at 1.20.1 |
+`probe` runs `StreamProbe` against a real station and prints the media/wall table above.
 
-The two packaging paths are deliberate and not interchangeable — see
-[ADR-0010](docs/adr/0010-decoder-libraries-and-packaging.md).
+### The full build
 
-### Server
+```bash
+./gradlew :core:test        # no Minecraft toolchain needed
+./gradlew :forge:build      # includes the client/server split check
+./gradlew :forge:runClient
+```
 
-**None.** The server parses MP3/ADTS/Ogg frame *headers* by hand in `core/frame` to build the
-timeline, and relays the encoded bytes untouched. It never decodes and never loads an audio library.
+`:neoforge` is commented out of `settings.gradle` until its build file moves to a toolchain that
+supports 1.20.1 — until then `./gradlew build` covers Forge only. Once it is back, CI must run both
+loaders, not just one ([ADR-0002](docs/adr/0002-shared-source-directory.md)).
 
-### Build-time only
+### Before handing anyone a jar
 
-| Dependency | Version | Purpose |
-|---|---|---|
-| ForgeGradle | `[6.0.24, 6.2)` | `:forge` toolchain |
-| NeoGradle (userdev) | `7.0.145` | `:neoforge` toolchain |
-| Parchment | `2023.09.03-1.20.1` | Readable parameter names |
-| Mixin Gradle | `0.7.+` | Refmap generation |
-| Shadow | `8.1.1` | Relocating JAADec |
-| JUnit Jupiter | `5.10.2` | `:core` tests |
+```bash
+./tools/check-server-jar.sh   # boots the PRODUCED jar on a real Forge dedicated server
+```
 
-### Platform
+**A green build does not mean a working jar.** `runClient` runs from the source set, so it never
+loads the jar at all — and it is a *client*, so Forge's dist checks never refuse anything. Both
+failure modes have actually shipped here: a jar missing all of `:core`, and a mod that crashed
+every dedicated server on boot. A green `:forge:build` coexisted happily with each.
 
-| | Version |
-|---|---|
-| Minecraft | 1.20.1 |
-| Forge | 47.4.0 |
-| NeoForge | 47.1.106 |
+Run this script after any change to packaging, to `MmmmForge`, or to the client/server split. It
+boots the artifact, places a radio, and waits for the relay to reach `PLAYING`.
 
-NeoForge 47.1.106 is the fork point from Forge 47.1, which is why one shared source directory
-covers both ([ADR-0002](docs/adr/0002-shared-source-directory.md)).
+Install **`mmmm-forge-1.20.1-<version>.jar`**. The `-slim` one has no nested libraries — JLayer is
+missing and MP3 playback dies at the first decode — and is not for use.
+
+### Two clients and a server
+
+The point of the mod is that two people hear the same instant, which takes three processes:
+
+```bash
+./gradlew :forge:runServer     # dedicated server, forge/run-server/
+./gradlew :forge:runClient     # player "Dev",  forge/run/
+./gradlew :forge:runClient2    # player "Dev2", forge/run-client2/
+```
+
+Connect both clients to `127.0.0.1`. Separate working directories are required, not tidiness: two
+clients sharing one directory fight over `options.txt`, the log and the session lock.
+
+`forge/run-server/` ships its `eula.txt`, `server.properties` and `ops.json` in git on purpose.
+The server runs `online-mode=false`, and an offline-mode UUID is derived from the username alone,
+so the committed ops entries are stable — but they are also **name- and case-specific**. Rename a
+client, or set `online-mode=true`, and both entries stop matching silently: you are simply not an
+operator any more, and setting a custom station stops working for no visible reason.
+
+On one machine this measures the protocol, not the sync. Both clients share a sound card and
+therefore one clock, so the rate trim — which exists to cancel *per-machine* clock error — is never
+exercised. Necessary, not sufficient.
 
 ---
 
 ## Toolchain setup
 
-Neither a JDK nor a usable Gradle is installed here:
+Debian 13 cannot supply this toolchain through `apt`, even with root:
 
 - `/usr/lib/jvm/java-17-openjdk-amd64` and `java-21-openjdk-amd64` are **JRE-only** — no `javac`.
-- Debian 13 offers **no `openjdk-17-jdk` package**, only 21. Minecraft 1.20.1 wants 17.
-- The `gradle` in apt is **4.4.1** (2018). ForgeGradle 6 needs 8.x.
+- There is **no `openjdk-17-jdk` package**, only 21. Minecraft 1.20.1 wants 17.
+- The packaged `gradle` is **4.4.1** (2018). ForgeGradle 6 needs 8.x.
 
-So apt cannot supply this toolchain even with root. Install JDK 17 from Adoptium instead — no root
-required:
+Install JDK 17 from Adoptium instead — no root required:
 
 ```bash
 mkdir -p ~/.jdks && cd ~/.jdks
@@ -122,16 +158,9 @@ export JAVA_HOME=~/.jdks/$(ls ~/.jdks | grep jdk-17)
 export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
-Gradle needs no separate install once the wrapper is generated — but generating the wrapper needs
-Gradle once. Bootstrap it without root:
-
-```bash
-cd ~/.jdks && curl -L -o gradle.zip https://services.gradle.org/distributions/gradle-8.8-bin.zip
-unzip -q gradle.zip && rm gradle.zip
-~/.jdks/gradle-8.8/bin/gradle wrapper --gradle-version 8.8   # run in the repo root
-```
-
-After that, `./gradlew` is self-sufficient and the one-off Gradle copy can be deleted.
+Gradle needs no install: the wrapper is committed, so `./gradlew` is self-sufficient once a JDK 17
+is on `JAVA_HOME`. (Regenerating the wrapper from scratch would need a one-off Gradle 8.x, which
+can be unzipped into `~/.jdks` the same way.)
 
 Verify:
 
@@ -161,47 +190,63 @@ common/    Minecraft code shared by both loaders. A SOURCE DIRECTORY pulled into
 forge/     Forge entry point, registries, networking, config.
 neoforge/  Same, for NeoForge.
 
+tools/     build-core.sh (fast :core loop), check-server-jar.sh (jar smoke test).
 docs/adr/  Architecture decisions, MADR format.
 ```
 
-## Building
+---
 
-`:core` is plain Java and needs none of the Minecraft toolchain, so while the pipeline is the thing
-under construction there is a fast loop that requires only a JDK 17:
+## Dependencies
 
-```bash
-export JAVA_HOME=~/.jdks/jdk-17...           # see Toolchain setup
-./tools/build-core.sh                        # compile + 158 tests, no Gradle
-./tools/build-core.sh probe https://somafm.com/groovesalad.pls 20 out.mp3
-```
+### Client only
 
-The full build, once the toolchain is in place:
+Decoders never run on the server (see [ADR-0004](docs/adr/0004-relay-codec-frames.md)), so they are
+declared `compileOnly` in `:core` and put on the client runtime classpath by the loader modules.
 
-```bash
-./gradlew :core:test
-./gradlew :forge:build
-./gradlew :forge:runClient
-```
+| Dependency | Coordinates | Purpose | Licence | How it ships |
+|---|---|---|---|---|
+| JLayer | `javazoom:jlayer:1.0.1` | MP3 decode | **LGPL-2.1** | **Jar-in-Jar, unmodified and unrelocated.** Relocating it would undermine the LGPL's separate-replaceability condition. |
+| JAADec | `net.sourceforge.jaadec:jaad:0.8.6` | AAC / HE-AAC decode | Public Domain | Shaded and relocated to `mmmm.shaded.jaad` — **not yet wired**: the coordinates do not resolve |
+| STB Vorbis | — | Ogg Vorbis decode | — | **No dependency** — would reuse Minecraft's own `OggAudioStream` via LWJGL. Not yet wired. |
+| Mixin | provided by loader | Hooks `SoundBufferLibrary#getStream` | — | Already present on both loaders at 1.20.1 |
 
-Before handing anyone a jar, check the jar rather than the build:
+Only MP3 plays today. The two packaging paths are deliberate and not interchangeable — see
+[ADR-0010](docs/adr/0010-decoder-libraries-and-packaging.md).
 
-```bash
-./tools/check-server-jar.sh                  # boots the produced jar on a real Forge server
-```
+### Server
 
-`runClient` runs from the source set, so it never loads the jar at all — and it is a *client*, so
-Forge's dist checks never refuse anything. A green build has, in practice, coexisted with a jar that
-could not load and with a mod that crashed every dedicated server. This script boots the artifact,
-places a radio and waits for the relay to reach `PLAYING`. Install
-`mmmm-forge-1.20.1-<version>.jar`; the `-slim` one has no nested libraries and is not for use.
+**None.** The server parses MP3/ADTS/Ogg frame *headers* by hand in `core/frame` to build the
+timeline, and relays the encoded bytes untouched. It never decodes and never loads an audio library.
+`:core:checkServerSideHasNoCodecDeps` fails the build if that ever stops being true.
 
-`:neoforge` is commented out of `settings.gradle` until its build file is moved to a toolchain that
-supports 1.20.1 — until then `./gradlew build` covers Forge only. Once it is back, CI must run both
-loaders, not just one (ADR-0002).
+### Build-time only
+
+| Dependency | Version | Purpose |
+|---|---|---|
+| ForgeGradle | `[6.0.24, 6.2)` | `:forge` toolchain |
+| NeoGradle (userdev) | `7.0.145` | `:neoforge` toolchain |
+| Parchment | `2023.09.03-1.20.1` | Readable parameter names |
+| Mixin Gradle | `0.7.+` | Refmap generation |
+| Shadow | `8.1.1` | Relocating JAADec |
+| JUnit Jupiter | `5.10.2` | `:core` tests |
+
+### Platform
+
+| | Version |
+|---|---|
+| Minecraft | 1.20.1 |
+| Forge | 47.4.0 |
+| NeoForge | 47.1.106 |
+
+NeoForge 47.1.106 is the fork point from Forge 47.1, which is why one shared source directory
+covers both ([ADR-0002](docs/adr/0002-shared-source-directory.md)).
+
+---
 
 ## Architecture decisions
 
-Eleven records in [`docs/adr/`](docs/adr/). The load-bearing ones:
+[`docs/adr/`](docs/adr/) carries its own index and reading order. The records are binding, not
+historical. The load-bearing ones:
 
 | # | Decision |
 |---|---|
@@ -232,5 +277,5 @@ resolve in code. Ship only stations that permit it, and see
 ## Licence
 
 See `modLicense` in `gradle.properties`. Bundled third-party licences are listed under
-[Runtime dependencies](#runtime-dependencies); JLayer's LGPL-2.1 terms are the reason it ships
-nested and unmodified rather than shaded.
+[Dependencies](#dependencies); JLayer's LGPL-2.1 terms are the reason it ships nested and
+unmodified rather than shaded.
