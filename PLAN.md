@@ -6,17 +6,23 @@ and the reasoning that is not recoverable from the diff.
 The architecture decisions live in [`docs/adr/`](docs/adr/) and are the authority — §13 indexes them
 and records the one amendment this plan makes. `README.md` is for people who want to *use* the mod.
 
-> **Status — 2026-08-11. It plays, and it ships.** The whole path works in game: relay → packets →
-> client sessions → drift loop → streaming `AudioStream` via `SoundInstance.getStream`. All three
-> shipped stations and a custom one have been heard, switching between them works, and the sound
-> attenuates with distance. `:core` is green at 158 tests. The radio has a control screen (§9 step 8).
+> **Status — 2026-08-11. It plays, it ships, and the drift loop finally works.** The whole path runs
+> in game: relay → packets → client sessions → drift loop → streaming `AudioStream` via
+> `SoundInstance.getStream`. Stations play, switch and attenuate with distance. `:core` is green at
+> 187 tests. The radio has a control screen and a sync-health readout (§9 steps 6, 8).
 >
 > The **produced jar** now loads and relays on a real dedicated server, which it never could before —
 > three packaging and dist defects, all invisible to `runClient` by construction, are written up in
 > §9. That was the blocker under the blocker: the multi-client sync test needs a dedicated server.
 >
+> **The sync path was broken until the readout was built to look at it.** Playback position ignored
+> the audio queued inside OpenAL, so it read 2.2 s ahead of the truth; the presentation delay was
+> shorter than that queue and could never be honoured; and the queue estimate then reversed the
+> control loop's sign. All three are fixed (§5.2, §5.3) and none was audible on a single client —
+> drift now settles inside ±5 ms with no underruns and one resync at startup.
+>
 > **Not yet done:** the multi-client sync measurement — the thing the entire design exists for — plus
-> drift tuning (step 6), positional polish (step 7), commands and config (step 8). See §11.
+> drift *gain* tuning (step 6), positional polish (step 7), config (step 8). See §11.
 
 ---
 
@@ -222,9 +228,26 @@ position and then hard-resyncing, which is audible; a short silence at join is n
 
 ### 5.2 Fixed presentation delay
 
-The server declares `presentationDelayMs` (default **3000**). Every client renders `pts` at
-`epoch + pts + D`. D must exceed worst-case client jitter plus decode time. The backlog ring removes
-the startup cost for everyone who joins after the first listener.
+The server declares `presentationDelayMs` (default **6000**). Every client renders `pts` at
+`epoch + pts + D`. The backlog ring removes the startup cost for everyone who joins after the first
+listener.
+
+**D must exceed the client's own output queue**, and that is the constraint that actually binds —
+not jitter, not decode time. Minecraft's OpenAL `Channel` queues `QUEUED_BUFFER_COUNT` (4) buffers of
+`BUFFER_DURATION_SECONDS` (1) each, and `attachBufferStream` demands all four the instant playback
+starts. A client cannot hold audio back by less than its own audio stack buffers ahead: the ring is
+drained dry at startup, the shortfall is padded with silence, and that silence offsets the timeline
+permanently.
+
+At D = 3000 this was measured as a rock-steady `drift +1119ms` — almost exactly the second the 4 s
+pump could not get from a 3 s ring — with a hard resync firing every tick and unable to help, because
+a resync corrects by discarding and the missing audio was never there. `RelayConfig` now warns below
+`MIN_USEFUL_PRESENTATION_DELAY_MS`.
+
+The saving grace is that 4 s is a vanilla constant, identical on every client, so it delays everyone
+equally rather than spreading them out. The cost of the larger D is a longer wait before audio
+starts, which is the right trade here: being late together is the point, being early alone is the
+failure.
 
 ### 5.3 Drift correction — `AL_PITCH` as a rate trim
 
@@ -248,6 +271,36 @@ between clients that converge and clients that merely stop diverging.
 pads underruns with silence and drops the oldest audio on overrun. A read counter sees neither, so
 position is computed as "where the writer is, minus what is still buffered", which stays exact
 however much the ring has padded or dropped.
+
+**Minus a third term, which was missing for the whole of the first implementation.** Writer-minus-ring
+gives the audio *handed to the sound system*, which is not the audio *heard* — OpenAL is holding
+several seconds of it. Position therefore read 2.2 s ahead of the truth, and every consequence
+followed from that one term: drift pinned at −2.2 s, a hard resync every tick that could not help,
+the drift controller reset twenty times a second so its integral never accumulated, and an effective
+delay of 0.4 s instead of 3.0 s. Audio still *sounded* fine, because the queue kept being fed. Worst
+of all, the amount queued depends on the listener's audio stack, so every client sat at its own
+offset — precisely what relaying exists to prevent.
+
+`OutputQueueEstimator` supplies the term without asking OpenAL: we know how many samples we handed
+over, and audio plays at real time, so the queue is `handedOut − elapsed × rate`. Two points that
+are easy to get wrong and were:
+
+- **It is not the wall-clock derivation rejected above.** That fails because padded silence and
+  dropped audio break the mapping between time and content. Here the ring still supplies position;
+  the clock only estimates the queue, where the objection does not apply, since silence occupies
+  playback time exactly as audio does.
+- **The rate is the trim, not the nominal sample rate.** Assuming nominal reverses the loop's sign:
+  a higher trim drains faster and is asked for more, so the apparent queue *grows*, position moves
+  backwards, and measured drift rises — so the integral pushes harder still. Seen as a trim ramping
+  3 ppm/s to its ceiling with drift stuck at +4 ms.
+
+The alternative was two access transformers into private vanilla fields to call `alGetSourcei`.
+Rejecting that kept ADR-0007's finding intact — the sound engine still does not have to be reached
+into — and left the arithmetic unit-testable in `:core`, which the OpenAL version could never be.
+
+> A pleasant side effect: the ±475 ms sawtooth on drift disappeared. When OpenAL takes a 1 s buffer
+> the ring drops 1 s and the queue estimate rises 1 s, so position does not move. The swing was
+> itself a symptom of not counting the queue.
 
 ---
 
@@ -422,7 +475,20 @@ difference.
     between them works; distance attenuation is correct, which is the check that would otherwise
     silently catch a mono-downmix regression. See §11 for the log evidence and the timings.
 
-**6. Drift control tuning** and the sync-health readout.
+**6. Drift control tuning** — **readout DONE, loop now closed, gains untuned.**
+`SyncFormat`/`SyncMeter`/`SyncHealthLine` render one line on the radio panel and, separately, into
+the client log, both gated by `config/mmmm-client.toml`:
+
+```
+drift    +0ms ±   0ms · buf  2.4s · trim  -126ppm · rtt  12ms · resync 1 total
+```
+
+  - **It found three real bugs within minutes of existing** (§5.2, §5.3), none of which was audible
+    on one client. That is the argument for building the instrument before the thing it measures.
+  - **Still to do:** the gains. Over 164 s the trim rises to +113 ppm, drives drift through zero,
+    overshoots to −5 ms and reverses — the first overshoot of a PI loop that is properly connected.
+    Whether it damps or sustains needs a longer run. Drift stayed inside ±5 ms throughout, which is
+    inside both the deadband and the 50 ms target, so this is tuning rather than a defect.
 
 **7. Positional tuning**: attenuation curve, `stereoWhenClose`.
 
