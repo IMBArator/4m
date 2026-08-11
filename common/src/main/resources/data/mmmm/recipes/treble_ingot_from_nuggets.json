@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "NNN",
+    "NNN",
+    "NNN"
+  ],
+  "key": {
+    "N": { "item": "mmmm:treble_nugget" }
+  },
+  "result": {
+    "item": "mmmm:treble_ingot",
+    "count": 1
+  }
+}

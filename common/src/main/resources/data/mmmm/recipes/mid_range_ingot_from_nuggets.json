@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "NNN",
+    "NNN",
+    "NNN"
+  ],
+  "key": {
+    "N": { "item": "mmmm:mid_range_nugget" }
+  },
+  "result": {
+    "item": "mmmm:mid_range_ingot",
+    "count": 1
+  }
+}

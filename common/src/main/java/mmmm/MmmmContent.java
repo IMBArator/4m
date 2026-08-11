@@ -2,8 +2,10 @@ package mmmm;
 
 import mmmm.block.RadioBlockEntity;
 import net.minecraft.sounds.SoundEvent;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 
+import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -24,6 +26,8 @@ public final class MmmmContent {
 
     private static Supplier<BlockEntityType<RadioBlockEntity>> radioBlockEntity;
     private static Supplier<SoundEvent> radioStream;
+    private static Supplier<Map<Block, Block>> depolarizations;
+    private static Map<Block, Block> depolarizationsResolved;
 
     /** Called once by each loader's entry class, before anything can be placed or played. */
     public static void bind(Supplier<BlockEntityType<RadioBlockEntity>> blockEntity,
@@ -45,6 +49,36 @@ public final class MmmmContent {
      */
     public static SoundEvent radioStream() {
         return require(radioStream, "radio stream sound event").get();
+    }
+
+    /**
+     * The vanilla → 4M block conversions the depolarization hammer performs.
+     *
+     * <p>A supplier of the whole map, rather than a map of suppliers: the loader knows the mapping
+     * when it constructs, but cannot resolve the right-hand side until the registries are filled.
+     * The map-of-suppliers shape also fights the type system — {@code Map.of(GOLD_BLOCK, BASS)}
+     * infers {@code Map<Block, RegistryObject<Block>>}, which is not a {@code Map<Block,
+     * Supplier<Block>>}, and needs an explicit type witness to compile.
+     */
+    public static void bindDepolarizations(Supplier<Map<Block, Block>> conversions) {
+        depolarizations = conversions;
+        depolarizationsResolved = null;
+    }
+
+    /**
+     * @return the 4M block {@code from} depolarizes into, or {@code null} if the hammer does nothing
+     *         to it — the overwhelmingly common case on any given right-click, so not an error
+     */
+    public static Block depolarized(Block from) {
+        // Resolved once and cached, so a right-click is a plain map lookup rather than a rebuild.
+        // Single-threaded in practice (the server thread handles useOn), and a benign race would at
+        // worst build the same immutable map twice.
+        Map<Block, Block> table = depolarizationsResolved;
+        if (table == null) {
+            table = require(depolarizations, "depolarization table").get();
+            depolarizationsResolved = table;
+        }
+        return table.get(from);
     }
 
     private static <T> Supplier<T> require(Supplier<T> supplier, String what) {

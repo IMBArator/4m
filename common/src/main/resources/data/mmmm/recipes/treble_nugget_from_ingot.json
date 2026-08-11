@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    { "item": "mmmm:treble_ingot" }
+  ],
+  "result": {
+    "item": "mmmm:treble_nugget",
+    "count": 9
+  }
+}

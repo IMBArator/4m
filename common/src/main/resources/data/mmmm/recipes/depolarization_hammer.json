@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "equipment",
+  "ingredients": [
+    { "item": "minecraft:iron_pickaxe" },
+    { "item": "minecraft:amethyst_shard" }
+  ],
+  "result": {
+    "item": "mmmm:depolarization_hammer",
+    "count": 1
+  }
+}

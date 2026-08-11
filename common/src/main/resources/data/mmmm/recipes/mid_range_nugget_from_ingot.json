@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    { "item": "mmmm:mid_range_ingot" }
+  ],
+  "result": {
+    "item": "mmmm:mid_range_nugget",
+    "count": 9
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    { "item": "mmmm:bass_block" }
+  ],
+  "result": {
+    "item": "mmmm:bass_ingot",
+    "count": 9
+  }
+}

@@ -1,7 +1,6 @@
 {
   "replace": false,
   "values": [
-    "mmmm:radio",
     "mmmm:bass_block",
     "mmmm:mid_range_block",
     "mmmm:treble_block"

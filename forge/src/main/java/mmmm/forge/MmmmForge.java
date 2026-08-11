@@ -8,9 +8,13 @@ import mmmm.core.relay.RelayManager;
 import mmmm.core.relay.SourceOpener;
 import mmmm.core.source.SourceConfig;
 import mmmm.forge.client.ForgeClientSetup;
+import mmmm.forge.client.ForgeTints;
 import mmmm.server.RadioCommands;
 import mmmm.server.RadioServer;
 import net.minecraft.world.item.CreativeModeTabs;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.loading.FMLEnvironment;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -25,6 +29,8 @@ import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
+
+import java.util.Map;
 
 /**
  * Forge entry point.
@@ -52,10 +58,24 @@ public final class MmmmForge {
         Registration.ITEMS.register(modBus);
         Registration.BLOCK_ENTITIES.register(modBus);
         Registration.SOUND_EVENTS.register(modBus);
+        Registration.CREATIVE_MODE_TABS.register(modBus);
 
         modBus.addListener(MmmmForge::commonSetup);
         modBus.addListener(MmmmForge::clientSetup);
         modBus.addListener(MmmmForge::addCreativeTabContents);
+
+        // Colour handlers cannot wait for clientSetup: RegisterColorHandlersEvent fires earlier in
+        // Minecraft's constructor than the resource reload that dispatches FMLClientSetupEvent, so
+        // installing them there is a no-op and every tinted block renders plain iron grey.
+        // ForgeTints has the full account.
+        //
+        // The dist check is what keeps ForgeTints — and through it net.minecraft.client — off a
+        // dedicated server entirely, taking the place clientSetup usually holds. The call is safe
+        // to name here because its descriptor mentions only IEventBus and List: no client type
+        // appears in this class's bytecode, so verifying it loads nothing.
+        if (FMLEnvironment.dist == Dist.CLIENT) {
+            ForgeTints.install(modBus, Registration.TINTED_BLOCKS, Registration.TINTED_ITEMS);
+        }
 
         IEventBus forgeBus = MinecraftForge.EVENT_BUS;
         forgeBus.addListener(MmmmForge::serverTick);
@@ -81,6 +101,12 @@ public final class MmmmForge {
         // Hand the registry objects to the shared code that needs them. DeferredRegister entries
         // are populated by the time common setup fires.
         MmmmContent.bind(Registration.RADIO_BLOCK_ENTITY, Registration.RADIO_STREAM);
+
+        // Vanilla has no silver, so iron stands in as the treble source (docs/crafting_idea.md).
+        MmmmContent.bindDepolarizations(() -> Map.of(
+                Blocks.GOLD_BLOCK, Registration.BASS_BLOCK.get(),
+                Blocks.COPPER_BLOCK, Registration.MID_RANGE_BLOCK.get(),
+                Blocks.IRON_BLOCK, Registration.TREBLE_BLOCK.get()));
     }
 
     /**
@@ -149,8 +175,9 @@ public final class MmmmForge {
     // ------------------------------------------------------------------ creative tab
 
     /**
-     * One block does not justify a creative tab of its own; it goes in a vanilla one. Revisit once
-     * there is more than a single item to group.
+     * 4M has its own tab now (see {@code Registration.TAB}), which is where everything lives. The
+     * radio keeps its vanilla-tab entry as well: it was findable under Functional Blocks before the
+     * 4M tab existed, and taking that away would be a regression for anyone used to it.
      *
      * <p>{@code BuildCreativeModeTabContentsEvent} implements {@code IModBusEvent}, so this listener
      * belongs on the mod bus, not the Forge bus.

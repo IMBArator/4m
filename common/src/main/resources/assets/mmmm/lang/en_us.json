@@ -1,5 +1,21 @@
 {
+  "itemGroup.mmmm": "4M",
+
   "block.mmmm.radio": "Radio",
+
+  "block.mmmm.bass_block": "Block of Bass",
+  "block.mmmm.mid_range_block": "Block of Mid-Range",
+  "block.mmmm.treble_block": "Block of Treble",
+
+  "item.mmmm.bass_ingot": "Bass Ingot",
+  "item.mmmm.mid_range_ingot": "Mid-Range Ingot",
+  "item.mmmm.treble_ingot": "Treble Ingot",
+
+  "item.mmmm.bass_nugget": "Bass Nugget",
+  "item.mmmm.mid_range_nugget": "Mid-Range Nugget",
+  "item.mmmm.treble_nugget": "Treble Nugget",
+
+  "item.mmmm.depolarization_hammer": "4M Depolarization Hammer",
 
   "gui.mmmm.radio.title": "Radio",
   "gui.mmmm.radio.play": "Play",

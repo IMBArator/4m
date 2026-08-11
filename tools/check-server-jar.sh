@@ -133,6 +133,16 @@ echo "setblock 0 -60 0 mmmm:radio" >&3
 sleep 2
 grep -q 'Unknown block type\|Could not set the block' "$LOG" && fail "mmmm:radio is not registered"
 
+# The rest of the blocks, for the one failure a client can never show: a block that registers on a
+# client and not on a server. They are placed off to the side and left there; nothing below reads
+# them, this is purely an "is it in the registry" assertion.
+for block in bass_block mid_range_block treble_block; do
+    echo "setblock 2 -60 0 mmmm:$block" >&3
+    sleep 1
+    grep -q 'Unknown block type\|Could not set the block' "$LOG" \
+        && fail "mmmm:$block is not registered on a dedicated server"
+done
+
 # Straight into the block entity's NBT: no player, so no right-click and no ConfigureRadio packet.
 echo "data modify block 0 -60 0 Playing set value 1b" >&3
 

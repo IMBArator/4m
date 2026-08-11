@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "building",
+  "pattern": [
+    "III",
+    "III",
+    "III"
+  ],
+  "key": {
+    "I": { "item": "mmmm:bass_ingot" }
+  },
+  "result": {
+    "item": "mmmm:bass_block",
+    "count": 1
+  }
+}
