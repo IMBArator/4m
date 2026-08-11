@@ -35,7 +35,33 @@ minecraft {
             }
         }
         client { property 'forge.enabledGameTestNamespaces', modId }
-        server { property 'forge.enabledGameTestNamespaces', modId; args '--nogui' }
+
+        // A second client, for the measurement the whole project exists for: two listeners on one
+        // server, both unmuted, and any offset above ~20 ms audible as phasing (PLAN.md §11).
+        //
+        // Its own working directory and its own username are both required, not tidiness. Two
+        // clients sharing `run` fight over options.txt, the log and the session lock; two clients
+        // called "Dev" are one duplicate login, and the server kicks the second.
+        // These two usernames are load-bearing beyond the login. run-server/ops.json grants level 4
+        // by UUID, and an offline-mode UUID is derived from the name alone —
+        // UUID.nameUUIDFromBytes("OfflinePlayer:" + name), an MD5 version-3 UUID — so it is stable
+        // everywhere but also case-sensitive and name-specific. Rename a client and its ops entry
+        // stops matching; run the server with online-mode=true and both entries go dead, because
+        // real Mojang UUIDs apply instead. Either way the failure is silent: you simply are not an
+        // operator, and setting a custom station stops working for no visible reason.
+        client2 {
+            parent minecraft.runs.client
+            workingDirectory project.file('run-client2')
+            args '--username', 'Dev2'
+        }
+
+        // Also its own directory: the dedicated server and a client otherwise interleave into one
+        // latest.log, which is precisely the file the sync work is read from.
+        server {
+            property 'forge.enabledGameTestNamespaces', modId
+            args '--nogui'
+            workingDirectory project.file('run-server')
+        }
     }
 }
 

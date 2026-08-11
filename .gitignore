@@ -6,9 +6,26 @@ build/
 # tools/build-core.sh output and its cached JUnit jar
 .build/
 
-# Minecraft dev runs
+# Minecraft dev runs.
 run/
 runs/
+run-client2/
+
+# The dedicated server for the two-client sync test (PLAN.md §11). Its eula.txt, server.properties
+# and ops.json are committed on purpose — rebuilding them by hand, offline-mode UUIDs included, is
+# exactly the friction that stops the measurement being run at all.
+#
+# Two gitignore rules bite here, and both fail silently rather than erroring:
+#   * Exclude the CONTENTS, not the directory. Git does not descend into an excluded directory, so
+#     `run-server/` followed by negations goes on ignoring all three files.
+#   * A pattern with a slash anywhere but the end is anchored to THIS file's directory. So
+#     `run-server/*` means `/run-server/*` and matches nothing, because the path is
+#     forge/run-server. That is also why `run/` above needs no prefix: no internal slash, so it
+#     matches at any depth.
+/forge/run-server/*
+!/forge/run-server/eula.txt
+!/forge/run-server/server.properties
+!/forge/run-server/ops.json
 
 # IDE
 .idea/
