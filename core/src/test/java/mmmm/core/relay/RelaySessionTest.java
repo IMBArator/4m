@@ -54,6 +54,9 @@ class RelaySessionTest {
         private final int burstBytes;
         private int position;
         private volatile boolean closed;
+        private boolean trickling;
+        private long trickleStartNanos;
+        private long trickleFramesSent;
 
         BurstingSource(int burstFrames, int trickleFrames) {
             this.data = Mp3Fixture.frames(burstFrames + trickleFrames);
@@ -74,12 +77,33 @@ class RelaySessionTest {
             } else {
                 // One frame per frame-duration: realtime, so `arrival - pts` stops falling and the
                 // session can conclude the burst has drained.
+                //
+                // Paced against an absolute deadline, not a fixed sleep per frame. A frame is
+                // 26.122 ms and Thread.sleep only takes whole milliseconds, so sleeping
+                // round(26.122) = 26 ms per frame runs this station permanently ~0.12 ms/frame
+                // fast. `arrival - pts` then improves on *every* frame, RelaySession keeps
+                // resetting its quiet period, settle() is never reached and the session sits in
+                // BUFFERING until the test times out. Whether that reproduced depended on how far
+                // the host's sleep overshot 26 ms, so it passed on a loaded machine and failed on
+                // one with accurate timers — eight failures here, all from that one cause.
+                //
+                // A deadline also cannot accumulate drift: a late frame is absorbed by the next
+                // wait rather than pushing every subsequent frame back.
                 chunk = Math.min(len, Mp3Fixture.FRAME_BYTES);
-                try {
-                    Thread.sleep(Math.round(Mp3Fixture.FRAME_MICROS / 1000.0));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return -1;
+                if (!trickling) {
+                    trickling = true;
+                    trickleStartNanos = System.nanoTime();
+                }
+                long dueNanos = trickleStartNanos
+                        + Math.round(++trickleFramesSent * Mp3Fixture.FRAME_MICROS * 1000.0);
+                long waitNanos = dueNanos - System.nanoTime();
+                if (waitNanos > 0) {
+                    try {
+                        Thread.sleep(waitNanos / 1_000_000L, (int) (waitNanos % 1_000_000L));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return -1;
+                    }
                 }
             }
             chunk = Math.min(chunk, data.length - position);
