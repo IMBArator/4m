@@ -80,6 +80,7 @@ future improvement. could be used to integrate 4m into other mods so it uses FE 
 - RGB shards
 - inert black ore
 - unmodulated etherial transport ore
+- raw frequency ore
 
 
 
@@ -126,6 +127,15 @@ alternatives:
 
 - mine raw freq ore
 - convert vanilla ore with some process into RFO
+
+simple start:
+
+- use 4m hammer:
+  - block of gold: block is converted to block of bass
+  - block of copper: convert to block of mid range
+  - block of silver: convert to block of treble.
+
+blocks of bass/mid/treble can be broken down into ingots and nuggets, like gold/copper etc.
 
 Craft pa cabinet with:
 - copper
