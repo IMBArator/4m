@@ -8,8 +8,8 @@ and records the one amendment this plan makes. `README.md` is for people who wan
 
 > **Status — 2026-08-11. It plays, it ships, and the drift loop finally works.** The whole path runs
 > in game: relay → packets → client sessions → drift loop → streaming `AudioStream` via
-> `SoundInstance.getStream`. Stations play, switch and attenuate with distance. `:core` is green at
-> 187 tests. The radio has a control screen and a sync-health readout (§9 steps 6, 8).
+> `SoundInstance.getStream`. Stations play, switch and attenuate with distance. `:core` is green.
+> The radio has a control screen and a sync-health readout (§9 steps 6, 8).
 >
 > The **produced jar** now loads and relays on a real dedicated server, which it never could before —
 > three packaging and dist defects, all invisible to `runClient` by construction, are written up in
@@ -461,7 +461,7 @@ difference.
 - **4b + 5, merged** — **DONE, heard in game.** Scoped as *server opens and relays* (so 4b and
   5 are one milestone), **MP3 only**, **one ring per block**.
   - **Done:** `:core` relay — `RelaySession`, `RelayManager`, `FrameBacklog`, `SourceOpener`,
-    `RelayConfig`, `SessionState`. 158 tests green.
+    `RelayConfig`, `SessionState`, all under test.
   - **Done:** the whole Minecraft-side path. `MmmmContent`, `Stations`, `RadioBlockEntity`,
     `RadioBlock` behaviour, `PlayerSubscriber`, `RadioServer`, `ClientMediaSession`; the client
     orchestrator `ClientMedia` (sessions, shared `ClockFilter`, drift loop, stale sweep); the
@@ -620,7 +620,7 @@ jarJar'd and looked just as installable as the real one.
 
 ## 11. Verification
 
-**Unit (`:core`, no game)** — 158 tests today. Frame timelines against known-duration fixtures,
+**Unit (`:core`, no game)** — frame timelines against known-duration fixtures,
 including a long fixture that would expose µs rounding accumulation; clock filter convergence under
 injected jitter and asymmetry; drift controller settling without hunting and exactly one resync on a
 500 ms step; ring buffer underrun returning full-length silence; relay epoch placement after a
