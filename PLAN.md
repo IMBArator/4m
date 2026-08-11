@@ -582,9 +582,33 @@ jarJar'd and looked just as installable as the real one.
 
 ## 10. Client lifecycle edges — each has bitten this class of mod before
 
-- **Game paused** (singleplayer ESC): vanilla pauses the channel while frames keep arriving. On
-  resume, re-derive the cursor from the clock. §5.3's hard-resync path handles this for free, which is
-  a decent sign the design is the right shape.
+- **Game paused** (singleplayer ESC) — **was the worst of these, and this entry was wrong.** It used
+  to read: "vanilla pauses the channel while frames keep arriving; on resume, re-derive the cursor
+  from the clock. §5.3's hard-resync path handles this for free, which is a decent sign the design is
+  the right shape." It was not free and it did not work. Measured, a 30 s pause put drift at −1.4 s to
+  −1.8 s with a hard resync firing nineteen times a second and **never recovering** for the rest of
+  the session.
+
+  Two things were wrong, both worth keeping because both were invisible:
+
+  1. **A hard resync could only correct in one direction.** It discards surplus history, so it fixes
+     playback that is *behind* and is a silent no-op on playback that is *ahead* — whereupon it fires
+     again next tick, for ever. Being ahead is not a rare edge: an uncounted output queue, silence
+     padded in at startup, and a resumed pause all produce it.
+  2. **In singleplayer, ESC pauses the integrated server too.** The relay's pending frames pile up
+     and the whole backlog lands in one burst on resume, overflowing the client's inbound queue —
+     200–400 frames, five or six seconds of audio, dropped. The write anchor assumed contiguity, so
+     the audio was not merely missing: the *position* was wrong by the lost duration permanently.
+
+  Fixed by making the anchor follow the stream (a frame whose timestamp is not where the previous
+  one ended re-anchors) and by **rejoining rather than correcting** when playback cannot be steered
+  back. A pause is a case where the client was *absent* while a live stream carried on, so there is
+  no position to jump to — the audio to fill the gap was never received. Rejoining runs the same path
+  as any session start, which is the best-exercised code in the client. The ring is deliberately not
+  flushed, so recovery takes about a second rather than a ten-second re-buffer.
+
+  **Still open:** the frames are still dropped. Bounding what the relay accumulates while a
+  singleplayer server is paused would fix the cause rather than the symptom.
 - **`SoundEngine.reload()`** (resource pack change, audio device switch) destroys every channel.
   Detect the dead channel via `SoundManager.isActive` and re-issue `play()`.
 - **Disconnect / world unload**: close sessions and stop threads. Leaked threads across world loads
@@ -640,11 +664,36 @@ block entity's synced volume, so sending only on release meant the knob moved wh
 happened. It now sends during the drag, throttled to 10 Hz — a drag fires dozens of mouse events a
 second and each accepted change costs a block update to every client tracking the chunk.
 
+**Thirty-minute soak, single client — done 2026-08-11.** The first evidence the sync design does what
+ADR-0005 claims, and the run that settled every question left open by the shorter ones. 1859 samples
+at 1 Hz from the debug log, two ESC pauses included:
+
+| | result |
+|---|---|
+| drift, whole run | **never left ±6 ms** — against a 50 ms target |
+| one-directional creep | **none**, so no `FrameParser` timeline bug (the µs-rounding hazard `Timeline` exists to prevent) |
+| hard resyncs | **2 total** — one at startup, one at a pause |
+| underruns | **0** |
+| `buf` | flat at 2.4–2.7 s |
+| ESC pauses | 2, both recovered in about a second |
+
+Two lessons about measuring, both learned by getting it wrong first:
+
+- **A 150-second sample declared this fixed while it was not.** The window simply ended before the
+  first pause. Runs shorter than the phenomenon prove nothing, and "it held for the length of my
+  patience" is not a result.
+- **The rate trim was called divergent on 500 seconds of data and is not.** Over 30 minutes it is a
+  bounded limit cycle, roughly ±130 ppm with a two-minute period, extremes −138/+99. It does not
+  settle on a fixed standing correction, which is a gain-tuning matter (§9 step 6) rather than a
+  defect: ±130 ppm is about 0.2 cents, inaudible, and the drift it produces stays eight times inside
+  the target.
+
 **Still to do here** — every one is a lifecycle edge (§10), which is exactly the class of bug that
 survives a happy-path pass:
 
 1. Two blocks, same station → one upstream socket (`ss -tp | grep java`), audio identical.
-2. ESC-pause 30 s, resume → audio is **live**, not stale.
+2. ~~ESC-pause 30 s, resume~~ — **done**, twice in the soak above, plus the dedicated runs that found
+   why it used to fail permanently (§10).
 3. `F3+T` resource reload → audio recovers.
 4. Break the block → the claim is dropped. (The *last claim closes the upstream* half is done — see
    the `/mmmm stop` run above. What is left is the break path specifically, and `4m-decode-*` on the
@@ -689,14 +738,29 @@ That last part also settles item 4 below for the refcount: the last claim releas
 upstream, and no relay thread survives it. Breaking the block is still unverified as such, though
 `setRemoved` was seen to release a session by hand during the same session of testing.
 
-**The sync test that actually matters** — dedicated server, 2+ clients:
-- Two clients on one machine, both unmuted: any offset above ~20 ms is plainly audible as phasing.
-  **Trust your ears before the readout.**
+**The sync test that actually matters** — dedicated server, 2+ clients. Three commands, since the
+setup is now committed rather than rebuilt by hand each time (that friction is most of why this had
+never been run):
+
+```bash
+./gradlew :forge:runServer     # run-server/, offline mode, Dev and Dev2 pre-opped
+./gradlew :forge:runClient     # Dev
+./gradlew :forge:runClient2    # Dev2
+```
+
+Both join `localhost`, both stand at one radio, both unmuted.
+
+- Any offset above ~20 ms is plainly audible as phasing. **Trust your ears before the readout.**
 - For a number: a station with sharp transients, record both outputs, cross-correlate. Target < 50 ms.
 - Add ~200 ms to one client with `tc netem` → re-converges via rate trim with no audible jump.
 - Join a third client mid-song → in sync immediately, no D-second silence.
-- Run 30+ minutes → **drift must not accumulate.** A steady one-directional creep is a `FrameParser`
-  timeline bug, not a clock bug.
+- ~~Run 30+ minutes → drift must not accumulate~~ — **done single-client**, see the soak above. Worth
+  repeating with two.
+
+> **Two clients on one machine measure the protocol, not the clocks.** They share a sound card, so
+> both drift the same way and the rate trim — which exists specifically to cancel *per-machine* clock
+> error (§5.3) — is never exercised. A green result here is necessary and not sufficient; the real
+> test needs the second client on different hardware.
 
 ---
 
