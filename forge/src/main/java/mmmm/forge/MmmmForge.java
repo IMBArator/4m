@@ -8,9 +8,11 @@ import mmmm.core.relay.RelayManager;
 import mmmm.core.relay.SourceOpener;
 import mmmm.core.source.SourceConfig;
 import mmmm.forge.client.ForgeClientSetup;
+import mmmm.server.RadioCommands;
 import mmmm.server.RadioServer;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
+import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -50,6 +52,7 @@ public final class MmmmForge {
 
         IEventBus forgeBus = MinecraftForge.EVENT_BUS;
         forgeBus.addListener(MmmmForge::serverTick);
+        forgeBus.addListener(MmmmForge::registerCommands);
         forgeBus.addListener(MmmmForge::serverStarting);
         forgeBus.addListener(MmmmForge::serverStopping);
         forgeBus.addListener(MmmmForge::playerLoggedOut);
@@ -101,6 +104,14 @@ public final class MmmmForge {
 
     private static void serverStopping(ServerStoppingEvent event) {
         RadioServer.shutdown();
+    }
+
+    /**
+     * Fires on every world load, and on {@code /reload} — so the dispatcher is a fresh one each time
+     * and the tree has to be rebuilt rather than cached.
+     */
+    private static void registerCommands(RegisterCommandsEvent event) {
+        RadioCommands.register(event.getDispatcher());
     }
 
     private static void serverTick(TickEvent.ServerTickEvent event) {
