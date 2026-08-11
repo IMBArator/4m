@@ -431,9 +431,15 @@ play/stop, a volume slider synced to every client, a status line driven by the r
 `SessionState`, and an operator-only custom URL box. `ConfigureRadio` (§6.1) is the transport;
 `RadioAllowlist` persists the hosts an operator authorises (ADR-0011 amendment). Sneak-right-click
 stays a no-GUI play/stop shortcut.
-  - **Still open:** `/mmmm radio <play|stop|station>` commands, a server config file, and the
-    sync-health readout (drift, buffer depth, clock offset) — `ClientMediaSession` already exposes
-    all of it, so that is a rendering job, not a plumbing one.
+  - **Commands: `/mmmm stop [radius]`** switches off every playing radio within `radius` (default
+    64) of the source, at permission level 2. Deliberately the *only* command: the screen already
+    covers every per-radio setting, and the one thing it cannot do is deal with several radios at
+    once, which is the whole administrative need. It sets the playing flag and lets
+    `RadioServer.tickBlock` drop the claim, rather than releasing the session itself — one path to a
+    state, not two.
+  - **Still open:** a server config file, and the sync-health readout (drift, buffer depth, clock
+    offset) — `ClientMediaSession` already exposes all of it, so that is a rendering job, not a
+    plumbing one.
 
 **9. `:neoforge`** — *not* mechanical, contrary to the original estimate. The entry class genuinely is
    a copy: NeoForge 47.1.106 is the Forge 47.1 fork, with the same `net.minecraftforge.*` packages and
@@ -566,8 +572,9 @@ survives a happy-path pass:
 1. Two blocks, same station → one upstream socket (`ss -tp | grep java`), audio identical.
 2. ESC-pause 30 s, resume → audio is **live**, not stale.
 3. `F3+T` resource reload → audio recovers.
-4. Break the block → last one closes the upstream; no `4m-relay-*` or `4m-decode-*` threads
-   survive (`jstack`).
+4. Break the block → the claim is dropped. (The *last claim closes the upstream* half is done — see
+   the `/mmmm stop` run above. What is left is the break path specifically, and `4m-decode-*` on the
+   client, which no headless test reaches.)
 5. Kill upstream connectivity → `RECONNECTING`, recovers on restore.
 
 **Dedicated server, from the produced jar — first pass done 2026-08-11.** `tools/check-server-jar.sh`
@@ -588,6 +595,25 @@ the dist that could not load the mod at all a few hours earlier.
 
 Deliberately *not* proven by it: anything client-side. No audio is decoded, because there is no
 client. It is a load-and-relay check, not a playback check.
+
+> **A dedicated server with nobody online does not tick block entities.** The spawn chunks stay
+> loaded but drop below ticking level once startup finishes, so `RadioServer.tickBlock` never runs —
+> no session is acquired, and, worse for diagnosis, none is ever *released*. Confirmed with a vanilla
+> furnace as a control: fuelled and loaded, `CookTime` stayed 0.
+>
+> This is worth knowing before it costs an hour. It first presented as the mod leaking upstream
+> connections on stop, which is a plausible and alarming bug and was not the bug. Any headless test
+> must `forceload add` the chunk it works in; `tools/check-server-jar.sh` does, and only passed
+> before because it happened to act inside the brief post-startup window when spawn chunks are still
+> ticking.
+
+**`/mmmm stop`, on a dedicated server.** Two radios on two different stations: two sessions, two
+upstream sockets, two `4m-relay-*` threads. `stop 2` closed only the near one; `stop` closed the
+rest; a third invocation reported nothing to stop. Sockets and relay threads both reached zero.
+
+That last part also settles item 4 below for the refcount: the last claim released does close the
+upstream, and no relay thread survives it. Breaking the block is still unverified as such, though
+`setRemoved` was seen to release a session by hand during the same session of testing.
 
 **The sync test that actually matters** — dedicated server, 2+ clients:
 - Two clients on one machine, both unmuted: any offset above ~20 ms is plainly audible as phasing.

@@ -211,6 +211,16 @@ Eleven records in [`docs/adr/`](docs/adr/). The load-bearing ones:
 | [0007](docs/adr/0007-vanilla-soundengine-mixin.md) | Let vanilla own the audio channel; supply the stream via one Mixin |
 | [0011](docs/adr/0011-egress-allowlist.md) | Default-deny egress allowlist — the relay makes the *server* fetch player-supplied URLs |
 
+## Commands
+
+```
+/mmmm stop [radius]      switch off every playing radio within radius (default 64) — operators only
+```
+
+One command on purpose. Right-clicking a radio opens a panel that covers everything about *that*
+radio, so the only gap worth filling from chat is the one the panel cannot: several radios playing
+at once, not all of them where you can reach them.
+
 ## Operator note on re-streaming
 
 The server holds **one** connection to a station and serves many players from it. The station
