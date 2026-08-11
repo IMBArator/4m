@@ -6,10 +6,14 @@ and the reasoning that is not recoverable from the diff.
 The architecture decisions live in [`docs/adr/`](docs/adr/) and are the authority — §13 indexes them
 and records the one amendment this plan makes. `README.md` is for people who want to *use* the mod.
 
-> **Status — 2026-08-11. It plays.** The whole path works in game: relay → packets → client sessions
-> → drift loop → streaming `AudioStream` via `SoundInstance.getStream`. All three shipped stations
-> and a custom one have been heard, switching between them works, and the sound attenuates with
-> distance. `:core` is green at 158 tests. The radio also has a control screen (§9 step 8).
+> **Status — 2026-08-11. It plays, and it ships.** The whole path works in game: relay → packets →
+> client sessions → drift loop → streaming `AudioStream` via `SoundInstance.getStream`. All three
+> shipped stations and a custom one have been heard, switching between them works, and the sound
+> attenuates with distance. `:core` is green at 158 tests. The radio has a control screen (§9 step 8).
+>
+> The **produced jar** now loads and relays on a real dedicated server, which it never could before —
+> three packaging and dist defects, all invisible to `runClient` by construction, are written up in
+> §9. That was the blocker under the blocker: the multi-client sync test needs a dedicated server.
 >
 > **Not yet done:** the multi-client sync measurement — the thing the entire design exists for — plus
 > drift tuning (step 6), positional polish (step 7), commands and config (step 8). See §11.
@@ -79,9 +83,16 @@ Two seams carry the loader-specific results back into shared code, both installe
 
 - `MmmmContent.bind(…)` — the `BlockEntityType` and `SoundEvent`, as suppliers, because registry
   contents do not exist when the entry class runs.
-- `RadioBlock.setClientTicker(…)` — so nothing on a class the dedicated server loads leads to
-  `net.minecraft.client`. A server that loads a client class dies with a stack trace pointing
-  anywhere but at the cause.
+- `RadioBlock.setClientTicker(…)` and `setScreenOpener(…)` — so nothing on a class the dedicated
+  server loads leads to `net.minecraft.client`. A server that loads a client class dies with a stack
+  trace pointing anywhere but at the cause, which is precisely what happened on 2026-08-11 (§9).
+
+The seam is necessary but not sufficient, and the gap is subtle enough to be worth stating here:
+**a lambda compiles its body into the enclosing class, a method reference does not.** Installing a
+seam with `x -> Minecraft.getInstance()…` puts client bytecode in the installing class even though
+the seam itself is clean. So the enforced rule is stronger than "use the seams": only a package named
+`client` may name a client type, and `:forge:checkClientClassesAreClientOnly` fails the build
+otherwise.
 
 ---
 
@@ -439,13 +450,61 @@ does — but "almost certainly" is what the mixin fallback exists for.
 
 **11. HLS** last — the one transport deferrable without blocking anything, and the on-ramp to video.
 
-### Known defect, unrelated to the milestone
+### Packaging and the dedicated server — **FIXED 2026-08-11**
 
-**No produced jar is currently loadable.** `implementation project(':core')` puts `:core` on the
-classpath but does not embed it; only `shadowJar` embeds, and it is never reobfed and does not inherit
-the `jar` manifest. So the reobfed `jar` would throw `NoClassDefFoundError: mmmm/core/…` at runtime.
-`runClient` runs from the source set, so development is unaffected. The fix is `reobf { shadowJar {} }`,
-a manifest copy, and deciding which classifier ships — its own commit, not this milestone's.
+Three defects, all of which made the mod unusable outside `runClient`, and none of which any
+existing check could see. Recorded in full because the *reason* they were invisible matters more
+than the fixes.
+
+**1. No produced jar contained `:core`.** `implementation project(':core')` compiles against the
+project but embeds nothing. The dev runs work by a different mechanism entirely — the `mods { source
+project(':core').sourceSets.main }` block — so `runClient` was green throughout while every jar the
+build produced would have thrown `NoClassDefFoundError: mmmm/core/…`. Both `jar` and `jarJar` now
+embed it. Embedding rather than nesting is safe because `:core` names no Minecraft type, so reobf
+passes it through untouched.
+
+**2. The mod crashed every dedicated server at construction**, before the packaging fix could even
+be exercised:
+
+```
+java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen
+                            for invalid dist DEDICATED_SERVER
+    at RuntimeDistCleaner.processClassWithFlags → FMLModContainer.constructMod
+```
+
+§2 predicted this exact failure and the seam that prevents it was in place — but the screen opener
+was written as a **lambda**, `radio -> Minecraft.getInstance().setScreen(new RadioScreen(radio))`,
+which compiles its body into a synthetic method **on `MmmmForge` itself**. Verifying that body means
+type-checking a `RadioScreen` against `Minecraft.setScreen(Screen)`, and argument assignability is
+one of the few things that forces the verifier to load another class. So merely *linking* the entry
+class demanded `Screen`. Two lines above,
+`RadioBlock.setClientTicker(ClientMedia::tickBlock)` was always fine: a **method reference** compiles
+to an `invokedynamic` whose target lives in the other class, so no client bytecode lands in the entry
+class at all.
+
+Identical-looking code, one of the two forms fatal. The rule is therefore no longer "be careful with
+lambdas" but **no client type is named outside a `client` package** — all such wiring moved to
+`mmmm.forge.client.ForgeClientSetup`, and `:forge:checkClientClassesAreClientOnly` fails the build on
+the import-level form.
+
+**3. JLayer shipped twice.** The `extractJLayer` dev workaround copies JLayer's classes into the
+compile output, and both jars were built from that directory — so 71 unrelocated `javazoom/**`
+classes rode into the shipped jar *alongside* the properly nested `jlayer-1.0.1.jar`. The baked-in
+copy shadows the nested one, which defeats the separate replaceability ADR-0010's LGPL arrangement
+depends on. `jar`/`jarJar` now exclude `javazoom/**`, restoring what ADR-0010's Confirmation clause
+already claimed was true.
+
+**Why all three survived:** `runClient` runs from the source set, so it never loads the jar; and it
+is a *client*, so `RuntimeDistCleaner` never refuses anything. The two properties that make dev runs
+convenient are exactly the two that hid these. `tools/check-server-jar.sh` closes the gap — it boots
+the produced jar on a real Forge dedicated server, places a radio and asserts it reaches `PLAYING`.
+It was written against defect 1 and immediately found defect 2.
+
+**Which artifact ships:** `mmmm-forge-<mc>-<version>.jar` (jarJar's output — reobfed, with `:core`
+embedded and JLayer nested). The `-slim` classifier is the same mod without nested libraries and
+will die at the first MP3 decode; it is not for installing. `shadowJar` is disabled until JAADec has
+real coordinates, since with nothing to relocate it emitted a third jar that was neither reobfed nor
+jarJar'd and looked just as installable as the real one.
 
 ---
 
@@ -510,6 +569,25 @@ survives a happy-path pass:
 4. Break the block → last one closes the upstream; no `4m-relay-*` or `4m-decode-*` threads
    survive (`jstack`).
 5. Kill upstream connectivity → `RECONNECTING`, recovers on restore.
+
+**Dedicated server, from the produced jar — first pass done 2026-08-11.** `tools/check-server-jar.sh`
+boots a real Forge 47.4.0 server with the shipped jar, places a radio with `setblock`, switches it on
+by writing the block entity's NBT — no player, so no right-click and no `ConfigureRadio` packet — and
+waits for the relay:
+
+```
+Done (6.680s)! For help, type "help"
+Radio at BlockPos{x=0, y=-60, z=0}: CONNECTING [somafm groovesalad-128-mp3]
+                                     BUFFERING   (+2s)
+                                     PLAYING     (+4s settling)
+```
+
+confirmed against `ss -tnp` showing the established upstream socket. That proves the packaging fix
+end to end: the block and block entity are registered, `:core` resolves, and `RelaySession` runs — on
+the dist that could not load the mod at all a few hours earlier.
+
+Deliberately *not* proven by it: anything client-side. No audio is decoded, because there is no
+client. It is a load-and-relay check, not a playback check.
 
 **The sync test that actually matters** — dedicated server, 2+ clients:
 - Two clients on one machine, both unmuted: any offset above ~20 ms is plainly audible as phasing.
