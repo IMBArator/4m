@@ -17,9 +17,14 @@ Superseding a decision means a new record that references the old one; the old f
 | [0010](0010-decoder-libraries-and-packaging.md) | JLayer via Jar-in-Jar, JAADec shaded, STB Vorbis reused | Accepted |
 | [0011](0011-egress-allowlist.md) | Default-deny egress allowlist on the server | Accepted, **amended** |
 | [0012](0012-naming-and-identifiers.md) | Call the product 4M, keep `mmmm` as the mod id | Accepted |
+| [0013](0013-client-only-code-in-client-packages.md) | Confine client-only code to `client` packages | Accepted |
 
 ## Reading order
 
 0003 is the keystone — it decides that the server relays, and 0004, 0005, 0006 and 0011 all follow
 from it. 0007, 0008 and 0009 are independent implementation decisions that would hold under any
-transport choice. 0012 stands alone and is worth reading before touching any identifier.
+transport choice.
+
+0012 and 0013 stand alone, and both are about failures that are invisible until they are fatal:
+0012 before touching any identifier, 0013 before adding a class, moving one, or wiring anything up
+in a loader entry class.
