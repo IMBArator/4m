@@ -556,6 +556,14 @@ Passed: the screen opens and lists stations; play/stop; switching station mid-pl
 attenuation with distance; an operator-set custom station reached through a playlist chain; the
 volume slider (after the fix below).
 
+**Re-verified after the client wiring moved to `ForgeClientSetup` (§9 defect 2).** All four seams
+that move installs — screen opener, config sender, client ticker, ping sender — checked in one pass:
+panel opened, Play took, audio played, attenuation correct. Worth doing deliberately rather than
+assuming, because only the first of the four announces itself. A mis-bound `setPingSender` stalls at
+`BUFFERING` while the server log still reads `PLAYING`, since the relay reaches `PLAYING` whether or
+not any client is decoding — so the server log cannot confirm the client half, and neither can a
+successful `runClient` launch.
+
 Worth reading in those timings: `BUFFERING → PLAYING` took 6.0 s on SomaFM but 2.4 s on Radio Bob.
 That is the epoch settling window (§4.3) behaving exactly as designed — it waits until
 `arrival − pts` stops falling, and SomaFM bursts harder, so it takes longer to settle. It is the
