@@ -17,9 +17,11 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
+import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -40,6 +42,11 @@ public final class MmmmForge {
 
     public MmmmForge() {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
+
+        // Registered on both dists. The spec itself names no client type, so a dedicated server
+        // parses it harmlessly and simply never reads the values.
+        ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, MmmmConfig.CLIENT_SPEC,
+                Mmmm.MOD_ID + "-client.toml");
 
         Registration.BLOCKS.register(modBus);
         Registration.ITEMS.register(modBus);

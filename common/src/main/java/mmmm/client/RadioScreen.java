@@ -45,6 +45,12 @@ public final class RadioScreen extends Screen {
     /** The station the list was last built for, so another player's change rebuilds it. */
     private String shownStation = "";
 
+    /** Redraw the readout four times a second. Faster than this and the digits cannot be read. */
+    private static final int HEALTH_TEXT_INTERVAL_TICKS = 5;
+
+    private int ticksSinceHealthText;
+    private Component healthLine;
+
     public RadioScreen(RadioBlockEntity radio) {
         super(Component.translatable("gui.mmmm.radio.title"));
         this.radio = radio;
@@ -114,6 +120,7 @@ public final class RadioScreen extends Screen {
         if (!shownStation.equals(radio.getStation())) {
             rebuildStations();
         }
+        updateSyncHealth();
     }
 
     @Override
@@ -129,6 +136,15 @@ public final class RadioScreen extends Screen {
         Component playing = nowPlaying();
         if (playing != null) {
             graphics.drawCenteredString(font, playing, width / 2, height - 28, 0xFFE082);
+        }
+
+        Component health = syncHealth();
+        if (health != null) {
+            // Left-aligned, unlike everything else on this panel, and deliberately. Centred text
+            // re-centres whenever its length changes, so every digit slides sideways each time the
+            // drift gains or loses a character — which makes a line of changing numbers unreadable
+            // however slowly it updates. Anchoring the left edge keeps each field in one place.
+            graphics.drawString(font, health, (width - PANEL_WIDTH) / 2, height - 16, 0xB0B0B0, false);
         }
     }
 
@@ -218,6 +234,74 @@ public final class RadioScreen extends Screen {
         String title = ClientMedia.titleFor(radio.getSessionId());
         return title == null || title.isBlank() ? null : Component.literal(title);
     }
+
+    /**
+     * The sync-health line: what this client's copy of the shared clock is doing.
+     *
+     * <p>Everything the design rests on is invisible without it. Two clients a quarter-second apart
+     * sound obviously wrong but give no clue <em>why</em>, and the three candidate causes leave
+     * different traces here: a clock that never converged, a buffer running dry, or a rate trim
+     * pinned at its limit and losing.
+     *
+     * <pre>
+     *   drift +12ms · buf 2.9s · trim +38ppm · rtt 4ms
+     * </pre>
+     *
+     * <ul>
+     *   <li><b>drift</b> — how far playback is from where the shared clock says it should be,
+     *       positive when behind. <em>This is the number the whole project is about.</em> Under
+     *       10 ms it sits in the controller's deadband and is not being corrected at all, which is
+     *       intended, not a stall.</li>
+     *   <li><b>buf</b> — decoded audio in hand. Should hover near the presentation delay; falling
+     *       towards zero is an underrun coming.</li>
+     *   <li><b>trim</b> — the playback-rate correction, in ppm. Worth more attention than it looks:
+     *       a <em>steady non-zero</em> trim is the controller cancelling this machine's sound-card
+     *       error, which is exactly what the integral term exists for (§5.3), so a value parked at
+     *       40 ppm is the system working rather than failing. Pinned at ±1000 is the ceiling, and
+     *       means it cannot keep up.</li>
+     *   <li><b>rtt</b> — the best round trip seen. The clock estimate is no better than about half
+     *       of this, so a large value bounds how good sync can possibly be.</li>
+     * </ul>
+     *
+     * <p>Two counters appear only when they are not zero, because a zero there is the normal case
+     * and a permanent {@code resync 0} trains the eye to skip the whole line: <b>resync</b> (hard
+     * jumps, each one audible) and <b>dropped</b> (frames discarded before decode).
+     *
+     * <p>Not gated behind F3. It is the instrument for the multi-client sync work and belongs
+     * wherever the radio's state is being looked at; it is dim, one line, and only rendered when a
+     * session actually exists.
+     */
+    private Component syncHealth() {
+        return healthLine;
+    }
+
+    /**
+     * Rebuilds the readout. Called from {@link #tick()}, never from {@code render}.
+     *
+     * <p>Both halves of that matter. Sampling belongs on the tick because the drift loop runs at
+     * 20 Hz and one sample per step is what the window assumes; sampling in {@code render} would
+     * weight whatever the frame rate happens to be. And the *text* is rebuilt at 4 Hz because
+     * numbers redrawn every frame cannot be read at all — the first version of this line was
+     * reported, accurately, as "hard to read".
+     */
+    private void updateSyncHealth() {
+        if (!ClientDebug.syncReadout()) {
+            healthLine = null;
+            return;
+        }
+        if (++ticksSinceHealthText < HEALTH_TEXT_INTERVAL_TICKS && healthLine != null) {
+            // Rebuilt at 4 Hz, not per frame and not per tick. Numbers redrawn any faster cannot be
+            // read at all — the first version of this line was reported, accurately, as "hard to
+            // read". The meter underneath still samples every drift step; only the text is throttled.
+            return;
+        }
+        ticksSinceHealthText = 0;
+        String line = SyncHealthLine.of(ClientMedia.sessionForBlock(radio.getBlockPos()), ClientMedia.clock());
+        healthLine = line == null ? null : Component.literal(line);
+    }
+
+
+
 
     // ------------------------------------------------------------------ widgets
 

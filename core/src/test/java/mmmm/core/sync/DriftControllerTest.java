@@ -204,4 +204,30 @@ class DriftControllerTest {
             return actualPts;
         }
     }
+
+    /**
+     * The reset must not erase what was measured.
+     *
+     * <p>It used to, and the consequence was severe: a client hard-resyncing on every tick reported
+     * a drift of zero to the health readout — i.e. perfect sync — because the reset ran between the
+     * measurement and the read. The readout claimed everything was fine while playback thrashed.
+     */
+    @Test
+    void aHardResyncKeepsTheDriftItMeasured() {
+        DriftController controller = new DriftController();
+        long huge = DriftController.HARD_RESYNC_MICROS * 4;
+
+        assertEquals(DriftController.Action.HARD_RESYNC, controller.update(0, huge));
+        assertEquals(huge, controller.lastDriftMicros(),
+                "the observed drift is evidence and must survive the reset");
+    }
+
+    /** What the reset is actually for: the control state, which the jump has made meaningless. */
+    @Test
+    void aHardResyncClearsTheControlState() {
+        DriftController controller = new DriftController();
+        controller.update(0, DriftController.HARD_RESYNC_MICROS * 4);
+        assertEquals(1.0, controller.rateTrim(), 1e-9);
+        assertEquals(0.0, controller.standingCorrection(), 1e-9);
+    }
 }

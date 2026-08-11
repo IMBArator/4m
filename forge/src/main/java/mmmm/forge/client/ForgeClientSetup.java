@@ -1,10 +1,12 @@
 package mmmm.forge.client;
 
 import mmmm.block.RadioBlock;
+import mmmm.client.ClientDebug;
 import mmmm.client.ClientMedia;
 import mmmm.client.ClientMessages;
 import mmmm.client.ClientNetwork;
 import mmmm.client.RadioScreen;
+import mmmm.forge.MmmmConfig;
 import mmmm.forge.MmmmNetwork;
 import net.minecraft.client.Minecraft;
 
@@ -53,6 +55,9 @@ public final class ForgeClientSetup {
      * anything under {@code net.minecraft.client}.
      */
     public static void install() {
+        // Suppliers, not values: Forge reloads config when the file or a config screen changes it,
+        // and a snapshot taken here would ignore that for the rest of the session.
+        ClientDebug.install(MmmmConfig::syncReadout, MmmmConfig::syncLog);
         // How shared code reaches the client audio path without naming a client class.
         RadioBlock.setClientTicker(ClientMedia::tickBlock);
         RadioBlock.setScreenOpener(ForgeClientSetup::openRadioScreen);

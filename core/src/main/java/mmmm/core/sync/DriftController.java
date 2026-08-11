@@ -129,11 +129,19 @@ public final class DriftController {
         return Action.CONTINUE;
     }
 
-    /** Resets after a hard resync; the jump has already removed the error the integral held. */
+    /**
+     * Resets after a hard resync; the jump has already removed the error the integral held.
+     *
+     * <p><b>{@link #lastDriftMicros} is deliberately left alone.</b> It used to be zeroed here, which
+     * destroyed the evidence at exactly the moment it mattered: a session resyncing on every tick
+     * reported a drift of zero to the health readout, i.e. perfect sync, because the reset ran
+     * between the measurement and the read. A diagnostic that reads zero while the thing it measures
+     * is failing is worse than no diagnostic. The field records what was last <em>observed</em>; the
+     * control state is what gets reset.
+     */
     public void resetAfterResync() {
         rateTrim = 1.0;
         integralMicroTicks = 0.0;
-        lastDriftMicros = 0;
     }
 
     /**

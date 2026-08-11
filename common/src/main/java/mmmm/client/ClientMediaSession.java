@@ -1,6 +1,7 @@
 package mmmm.client;
 
 import mmmm.core.audio.PcmRingBuffer;
+import mmmm.core.sync.SyncMeter;
 import mmmm.core.codec.Decoder;
 import mmmm.core.codec.JLayerDecoder;
 import mmmm.core.media.MediaFrame;
@@ -62,6 +63,7 @@ public final class ClientMediaSession implements Closeable {
 
     private final BlockingQueue<MediaFrame> incoming = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final PcmRingBuffer ring;
+    private final SyncMeter meter = new SyncMeter();
     private final DriftController drift = new DriftController();
     private final Decoder decoder = new JLayerDecoder();
     private final Thread decodeThread;
@@ -219,6 +221,10 @@ public final class ClientMediaSession implements Closeable {
         if (drift.update(actual, target) == DriftController.Action.HARD_RESYNC) {
             hardResync(target);
         }
+        // Sampled here, and only here: SyncMeter's window assumes exactly one sample per drift step,
+        // and this is the only place a step happens. Sampling from a renderer instead would weight
+        // the window by frame rate, and would collect nothing while no screen is open.
+        meter.sample(drift.lastDriftMicros(), drift.rateTrim(), drift.hardResyncCount());
         return target - actual;
     }
 
@@ -297,12 +303,33 @@ public final class ClientMediaSession implements Closeable {
         return ring.available();
     }
 
+    /**
+     * How much decoded audio is waiting to be played, in microseconds.
+     *
+     * <p>Here rather than at the caller because turning bytes into time needs to know that the ring
+     * holds mono 16-bit samples (ADR-0008), and that is this class's business. A readout that did
+     * the division itself would be a second place to update if the format ever changes, and it would
+     * be wrong silently rather than loudly.
+     *
+     * <p>In a healthy session this sits near the presentation delay: below it means the client is
+     * running dry and an underrun is coming; well above it means playback has fallen behind and the
+     * drift controller has not caught up yet.
+     */
+    public long bufferedMicros() {
+        return Timeline.toMicros(ring.available() / 2L, sampleRate);
+    }
+
     public boolean underrunning() {
         return ring.lastReadWasUnderrun();
     }
 
     public long framesDroppedInbound() {
         return framesDroppedInbound;
+    }
+
+    /** Rolling window over the drift loop, for the health readout and the debug log. */
+    public SyncMeter syncMeter() {
+        return meter;
     }
 
     @Override

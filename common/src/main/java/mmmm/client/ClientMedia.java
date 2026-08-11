@@ -1,5 +1,6 @@
 package mmmm.client;
 
+import com.mojang.logging.LogUtils;
 import mmmm.block.RadioBlockEntity;
 import mmmm.core.media.MediaFrame;
 import mmmm.core.media.StreamInfo;
@@ -7,6 +8,7 @@ import mmmm.core.sync.ClockFilter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.sounds.SoundManager;
 import net.minecraft.core.BlockPos;
+import org.slf4j.Logger;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -152,6 +154,10 @@ public final class ClientMedia {
     // ------------------------------------------------------------------ global tick
 
     /** Drive from {@code TickEvent.ClientTickEvent} END. */
+    private static final Logger LOGGER = LogUtils.getLogger();
+
+    private static final int SYNC_LOG_INTERVAL_TICKS = 20;
+
     public static void onClientTick() {
         tickCount++;
 
@@ -184,6 +190,27 @@ public final class ClientMedia {
             }
         }
         reapOrphanedSessions();
+        logSyncHealth();
+    }
+
+    /**
+     * Writes the health line to the client log once a second, when the config asks for it.
+     *
+     * <p>Same line as the control panel, from the same meter, so the two can never disagree while
+     * someone is trying to work out which of them to believe. Rate-limited to 1 Hz: the drift loop
+     * runs at 20, and twenty lines a second per radio is not a log anyone reads.
+     */
+    private static void logSyncHealth() {
+        if (sessions.isEmpty() || !ClientDebug.syncLog() || tickCount % SYNC_LOG_INTERVAL_TICKS != 0) {
+            return;
+        }
+        for (Map.Entry<BlockPos, Integer> entry : sessionByBlock.entrySet()) {
+            ClientMediaSession session = sessions.get(entry.getValue());
+            String line = SyncHealthLine.of(session, clock);
+            if (line != null) {
+                LOGGER.info("Radio at {}: {}", entry.getKey(), line);
+            }
+        }
     }
 
     // ------------------------------------------------------------------ packet ingress
