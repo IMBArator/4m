@@ -19,8 +19,6 @@ But start mod development with simpler all-in-one pocket radio and tv.
 
 Streams audio from various sources.
 
-Can
-
 ### 4m pocket tv
 
 Streams audio+video from various sources.
@@ -85,7 +83,7 @@ future improvement. could be used to integrate 4m into other mods so it uses FE 
 
 
 
-# Craftinh
+# Crafting
 
 ## road to video screen
 
@@ -110,8 +108,6 @@ Inert Blocks of Black can be created from lava by hitting it with the Depolariza
 
 The screen is multiblock and as min-max size somehow.
 
-
-# Crafting
 
 ## road to pa cabinet
 
