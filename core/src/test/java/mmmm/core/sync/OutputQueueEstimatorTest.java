@@ -36,10 +36,10 @@ class OutputQueueEstimatorTest {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(4L * RATE, 0);
 
-        estimator.advance(SECOND, 1.0);
-        assertEquals(3L * RATE, estimator.queuedSamples());
-        estimator.advance(2 * SECOND, 1.0);
-        assertEquals(2L * RATE, estimator.queuedSamples());
+        advanceOver(estimator, 0, SECOND, 1.0);
+        assertEquals(3L * RATE, estimator.queuedSamples(), RATE / 100);
+        advanceOver(estimator, SECOND, SECOND, 1.0);
+        assertEquals(2L * RATE, estimator.queuedSamples(), RATE / 100);
     }
 
     /**
@@ -55,8 +55,8 @@ class OutputQueueEstimatorTest {
         nominal.onRead(4L * RATE, 0);
         fast.onRead(4L * RATE, 0);
 
-        nominal.advance(SECOND, 1.0);
-        fast.advance(SECOND, 1.001);
+        advanceOver(nominal, 0, SECOND, 1.0);
+        advanceOver(fast, 0, SECOND, 1.001);
 
         assertTrue(fast.queuedSamples() < nominal.queuedSamples(),
                 "a faster rate must consume more, or the drift loop's feedback is reversed");
@@ -69,8 +69,8 @@ class OutputQueueEstimatorTest {
         nominal.onRead(4L * RATE, 0);
         slow.onRead(4L * RATE, 0);
 
-        nominal.advance(SECOND, 1.0);
-        slow.advance(SECOND, 0.999);
+        advanceOver(nominal, 0, SECOND, 1.0);
+        advanceOver(slow, 0, SECOND, 0.999);
 
         assertTrue(slow.queuedSamples() > nominal.queuedSamples());
     }
@@ -81,10 +81,10 @@ class OutputQueueEstimatorTest {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(8L * RATE, 0);
 
-        estimator.advance(SECOND, 1.0);
-        estimator.advance(2 * SECOND, 1.0);
+        advanceOver(estimator, 0, SECOND, 1.0);
+        advanceOver(estimator, SECOND, SECOND, 1.0);
         // Only this last second is played fast; the two before it stay at nominal.
-        estimator.advance(3 * SECOND, 2.0);
+        advanceOver(estimator, 2 * SECOND, SECOND, 2.0);
 
         // 1 + 1 + 2 = 4 seconds played, of 8 handed over.
         assertEquals(4L * RATE, estimator.queuedSamples(), RATE / 100);
@@ -97,9 +97,9 @@ class OutputQueueEstimatorTest {
         estimator.onRead(4L * RATE, 0);
 
         for (int second = 1; second <= 10; second++) {
-            estimator.advance(second * SECOND, 1.0);
+            advanceOver(estimator, (second - 1) * SECOND, SECOND, 1.0);
             estimator.onRead(RATE, second * SECOND);
-            assertEquals(4L * RATE, estimator.queuedSamples(),
+            assertEquals(4L * RATE, estimator.queuedSamples(), RATE / 100,
                     "the queue should stay four seconds deep at second " + second);
         }
     }
@@ -113,8 +113,46 @@ class OutputQueueEstimatorTest {
     void theQueueIsNeverNegative() {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(RATE, 0);
-        estimator.advance(60 * SECOND, 1.0);
+        advanceOver(estimator, 0, 5 * SECOND, 1.0);
         assertEquals(0, estimator.queuedSamples());
+    }
+
+    /**
+     * The ESC-pause case, and the one that actually bit. Nothing played during the pause, so nothing
+     * may be credited to it — and the damage from getting this wrong is permanent, because the
+     * played estimate keeps the excess for the rest of the session.
+     */
+    @Test
+    void aPauseIsNotCountedAsPlayback() {
+        OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
+        estimator.onRead(4L * RATE, 0);
+
+        // A minute of ESC menu arrives as one enormous step once the client ticks again.
+        estimator.advance(60 * SECOND, 1.0);
+
+        assertEquals(4L * RATE, estimator.queuedSamples(),
+                "the sound system was paused too, so its queue is untouched");
+    }
+
+    /** And the estimate keeps working afterwards rather than being poisoned by the gap. */
+    @Test
+    void playbackResumesNormallyAfterAPause() {
+        OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
+        estimator.onRead(4L * RATE, 0);
+        estimator.advance(60 * SECOND, 1.0);
+
+        advanceOver(estimator, 60 * SECOND, SECOND / 10, 1.0);
+        assertEquals(3.9 * RATE, estimator.queuedSamples(), RATE / 50.0,
+                "a tenth of a second after resuming, a tenth of a second has played");
+    }
+
+    /** A stutter is real playback and must still be counted, or the cap becomes a slow leak. */
+    @Test
+    void anOrdinaryStutterIsStillCounted() {
+        OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
+        estimator.onRead(4L * RATE, 0);
+        estimator.advance(SECOND / 5, 1.0);
+        assertEquals(3.8 * RATE, estimator.queuedSamples(), RATE / 50.0);
     }
 
     /**
@@ -145,10 +183,30 @@ class OutputQueueEstimatorTest {
     void partialSecondsDrainProportionally() {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(RATE, 0);
-        estimator.advance(SECOND / 2, 1.0);
+        advanceOver(estimator, 0, SECOND / 2, 1.0);
 
         long half = estimator.queuedSamples();
         assertTrue(Math.abs(half - RATE / 2) < 100,
                 "half a second in, half a second should remain, got " + half);
+    }
+
+    /**
+     * Advances in 50 ms steps, the way the drift loop actually does at 20 Hz.
+     *
+     * <p>The tests used to step a whole second at a time, which is not a thing that happens and which
+     * the pause cap now correctly refuses to count. Simulating the real cadence keeps them honest
+     * about what they are testing.
+     *
+     * @return the timestamp reached
+     */
+    private static long advanceOver(OutputQueueEstimator estimator, long fromNanos,
+                                    long durationNanos, double rate) {
+        long step = SECOND / 20;
+        long now = fromNanos;
+        for (long elapsed = 0; elapsed < durationNanos; elapsed += step) {
+            now = fromNanos + Math.min(elapsed + step, durationNanos);
+            estimator.advance(now, rate);
+        }
+        return now;
     }
 }

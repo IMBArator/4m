@@ -34,6 +34,12 @@ public final class OutputQueueEstimator {
 
     private static final long UNSET = Long.MIN_VALUE;
 
+    /**
+     * Longest gap treated as real playback. The drift loop steps at 20 Hz, so a quarter second is
+     * five steps — comfortably past a stutter, far short of a pause.
+     */
+    private static final long MAX_ADVANCE_NANOS = 250_000_000L;
+
     private final int sampleRate;
     private final long maxQueuedSamples;
 
@@ -91,6 +97,21 @@ public final class OutputQueueEstimator {
         }
         long deltaNanos = Math.max(0, nowNanos - lastAdvanceNanos);
         lastAdvanceNanos = nowNanos;
+
+        // A gap much larger than one step means this was not running — an ESC pause, a breakpoint, a
+        // suspended process — and during it the sound system was not playing either. Integrating the
+        // gap credits the wall clock with audio nobody heard, and the damage is permanent: the
+        // played estimate keeps that excess forever, the queue collapses to zero and stays there,
+        // and position reads seconds ahead for the rest of the session.
+        //
+        // Seen exactly once, and unmistakably: a singleplayer ESC pause put drift at -400 ms with a
+        // hard resync firing twelve times a second and never recovering, after five minutes of
+        // holding inside ±7 ms. PLAN.md §10 lists pause as a lifecycle edge the resync path handles
+        // "for free"; it does not handle this, because a resync corrects by discarding and the error
+        // is in the estimate rather than in the buffer.
+        if (deltaNanos > MAX_ADVANCE_NANOS) {
+            return;
+        }
         playedSamples += deltaNanos * 1.0e-9 * sampleRate * rateTrim;
     }
 
