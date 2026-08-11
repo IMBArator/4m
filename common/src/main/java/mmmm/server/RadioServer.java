@@ -230,7 +230,14 @@ public final class RadioServer {
             radio.setServerSession(session, wanted);
         }
         radio.setSessionId(session.sessionId());
-        radio.setSessionState(session.state());
+
+        // Logged on transition only. Without this a working radio is completely silent in the log,
+        // so "no errors" and "never tried" look identical when diagnosing from a log after the fact.
+        SessionState now = session.state();
+        if (radio.getSessionState() != now) {
+            LOGGER.info("Radio at {}: {} [{}]", radio.getBlockPos(), now, wanted);
+        }
+        radio.setSessionState(now);
 
         if (session.state() == SessionState.FAILED) {
             // FAILED is terminal by design — the relay does not retry a refused destination or an
