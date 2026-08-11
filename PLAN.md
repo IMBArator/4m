@@ -6,11 +6,13 @@ and the reasoning that is not recoverable from the diff.
 The architecture decisions live in [`docs/adr/`](docs/adr/) and are the authority — §13 indexes them
 and records the one amendment this plan makes. `README.md` is for people who want to *use* the mod.
 
-> **Status — 2026-08-10.** `:core` is complete through the relay and green (154 tests). The Forge
-> module loads, registers and renders a craftable radio block. The full client audio path is now
-> written and **compiles against Minecraft**: relay → packets → client sessions → drift loop →
-> streaming `AudioStream` via `SoundInstance.getStream`. **It has not yet been heard in game** —
-> `runClient` and the §11 checks are the next thing. See §9 for the exact state.
+> **Status — 2026-08-11. It plays.** The whole path works in game: relay → packets → client sessions
+> → drift loop → streaming `AudioStream` via `SoundInstance.getStream`. All three shipped stations
+> and a custom one have been heard, switching between them works, and the sound attenuates with
+> distance. `:core` is green at 158 tests. The radio also has a control screen (§9 step 8).
+>
+> **Not yet done:** the multi-client sync measurement — the thing the entire design exists for — plus
+> drift tuning (step 6), positional polish (step 7), commands and config (step 8). See §11.
 
 ---
 
@@ -392,10 +394,10 @@ difference.
 
 - **~~4a~~** — **DONE.** Toolchain, entry class, registries, `RadioBlock` ported from the 2022
   Forge 1.18.2 `webradiomod` prototype, assets, recipe, loot table, tag. Verified in game.
-- **4b + 5, merged** — **COMPILES, NOT YET HEARD.** Scoped as *server opens and relays* (so 4b and
+- **4b + 5, merged** — **DONE, heard in game.** Scoped as *server opens and relays* (so 4b and
   5 are one milestone), **MP3 only**, **one ring per block**.
   - **Done:** `:core` relay — `RelaySession`, `RelayManager`, `FrameBacklog`, `SourceOpener`,
-    `RelayConfig`, `SessionState`. 154 tests green.
+    `RelayConfig`, `SessionState`. 158 tests green.
   - **Done:** the whole Minecraft-side path. `MmmmContent`, `Stations`, `RadioBlockEntity`,
     `RadioBlock` behaviour, `PlayerSubscriber`, `RadioServer`, `ClientMediaSession`; the client
     orchestrator `ClientMedia` (sessions, shared `ClockFilter`, drift loop, stale sweep); the
@@ -405,9 +407,9 @@ difference.
     entity + sound event registration; `sounds.json` and the placeholder ogg; the lifecycle wiring
     in `MmmmForge` (server tick, server start/stop, player logout, client tick, client disconnect,
     client ticker install, ping sender install). `:forge:build` is green.
-  - **Remaining:** `runClient` and the §11 in-game checks. The compile can no longer surface a
-    design fault, only the runtime can — the §11 list is the next thing to walk through. After that:
-    tuning (step 6), positional polish (step 7), config/commands/GUI (step 8).
+  - **Heard in game, 2026-08-11.** All three shipped stations and a custom one played; switching
+    between them works; distance attenuation is correct, which is the check that would otherwise
+    silently catch a mono-downmix regression. See §11 for the log evidence and the timings.
 
 **6. Drift control tuning** and the sync-health readout.
 
@@ -463,7 +465,7 @@ a manifest copy, and deciding which classifier ships — its own commit, not thi
 
 ## 11. Verification
 
-**Unit (`:core`, no game)** — 154 tests today. Frame timelines against known-duration fixtures,
+**Unit (`:core`, no game)** — 158 tests today. Frame timelines against known-duration fixtures,
 including a long fixture that would expose µs rounding accumulation; clock filter convergence under
 injected jitter and asymmetry; drift controller settling without hunting and exactly one resync on a
 500 ms step; ring buffer underrun returning full-length silence; relay epoch placement after a
@@ -474,15 +476,40 @@ retryable failures.
 listen. Length alone proves nothing: a byte-order slip, a swapped channel and a lost bit reservoir all
 produce PCM of exactly the right length.
 
-**In-game (`runClient`):**
-1. Place a radio, right-click → audio within ~2 s (the backlog ring working).
-2. Walk away → smooth attenuation. If it does not attenuate, the mono downmix regressed.
-3. Two blocks, same station → one upstream socket (`ss -tp | grep java`), audio identical.
-4. ESC-pause 30 s, resume → audio is **live**, not stale.
-5. `F3+T` resource reload → audio recovers.
-6. Break the block → last one closes the upstream; no `4m-relay-*` or `4m-decode-*` threads
+**In-game (`runClient`) — first pass done 2026-08-11.** Single client, integrated server. What the
+log recorded:
+
+```
+08:05:17  CONNECTING [somafm groovesalad-128-mp3]
+08:05:19  BUFFERING              (+1.8s)
+08:05:25  PLAYING                (+6.0s settling)
+08:08:04  Station set. streams.radiobob.de is now allowed on this server.
+08:08:07  PLAYING [streams.radiobob.de/bob-alternative/mp3-128/]   (+2.4s)
+```
+
+Passed: the screen opens and lists stations; play/stop; switching station mid-play; audio;
+attenuation with distance; an operator-set custom station reached through a playlist chain; the
+volume slider (after the fix below).
+
+Worth reading in those timings: `BUFFERING → PLAYING` took 6.0 s on SomaFM but 2.4 s on Radio Bob.
+That is the epoch settling window (§4.3) behaving exactly as designed — it waits until
+`arrival − pts` stops falling, and SomaFM bursts harder, so it takes longer to settle. It is the
+mechanism working, not latency to tune away.
+
+One defect found and fixed: the volume slider only took effect on release. The sound follows the
+block entity's synced volume, so sending only on release meant the knob moved while nothing audible
+happened. It now sends during the drag, throttled to 10 Hz — a drag fires dozens of mouse events a
+second and each accepted change costs a block update to every client tracking the chunk.
+
+**Still to do here** — every one is a lifecycle edge (§10), which is exactly the class of bug that
+survives a happy-path pass:
+
+1. Two blocks, same station → one upstream socket (`ss -tp | grep java`), audio identical.
+2. ESC-pause 30 s, resume → audio is **live**, not stale.
+3. `F3+T` resource reload → audio recovers.
+4. Break the block → last one closes the upstream; no `4m-relay-*` or `4m-decode-*` threads
    survive (`jstack`).
-7. Kill upstream connectivity → `RECONNECTING`, recovers on restore.
+5. Kill upstream connectivity → `RECONNECTING`, recovers on restore.
 
 **The sync test that actually matters** — dedicated server, 2+ clients:
 - Two clients on one machine, both unmuted: any offset above ~20 ms is plainly audible as phasing.
