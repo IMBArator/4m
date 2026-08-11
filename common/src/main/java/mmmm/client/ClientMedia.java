@@ -139,6 +139,10 @@ public final class ClientMedia {
             if (sound != null) {
                 sm.stop(sound);
             }
+            // The old channel took its queued audio with it, so the queue estimate has to start
+            // again — otherwise seconds of audio that no longer exists stay subtracted from the
+            // playback position, and the drift loop chases a ghost.
+            session.onPlaybackRestarted();
             sound = new RadioSoundInstance(pos, sid, radio.getVolume());
             sounds.put(pos, sound);
             sm.play(sound);

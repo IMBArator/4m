@@ -1,6 +1,7 @@
 package mmmm.client;
 
 import mmmm.core.audio.PcmRingBuffer;
+import mmmm.core.sync.OutputQueueEstimator;
 import mmmm.core.sync.SyncMeter;
 import mmmm.core.codec.Decoder;
 import mmmm.core.codec.JLayerDecoder;
@@ -50,6 +51,14 @@ public final class ClientMediaSession implements Closeable {
      */
     private static final int QUEUE_CAPACITY = 1024;
 
+    /**
+     * What Minecraft's OpenAL channel queues ahead of the speaker: {@code QUEUED_BUFFER_COUNT} (4)
+     * buffers of {@code BUFFER_DURATION_SECONDS} (1) each, all demanded the moment playback starts.
+     * The presentation delay has to exceed this or the ring is drained dry at startup — see
+     * {@link mmmm.core.relay.RelayConfig#MIN_USEFUL_PRESENTATION_DELAY_MS}.
+     */
+    private static final int OUTPUT_QUEUE_SECONDS = 4;
+
     /** Ring headroom beyond the presentation delay, for jitter and for the origin's burst. */
     private static final int RING_MARGIN_MS = 6_000;
 
@@ -64,6 +73,7 @@ public final class ClientMediaSession implements Closeable {
     private final BlockingQueue<MediaFrame> incoming = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final PcmRingBuffer ring;
     private final SyncMeter meter = new SyncMeter();
+    private final OutputQueueEstimator outputQueue;
     private final DriftController drift = new DriftController();
     private final Decoder decoder = new JLayerDecoder();
     private final Thread decodeThread;
@@ -90,6 +100,11 @@ public final class ClientMediaSession implements Closeable {
         // Mono after downmix: two bytes per sample.
         int ringBytes = (int) ((presentationDelayMs + RING_MARGIN_MS) / 1000.0 * sampleRate) * 2;
         this.ring = new PcmRingBuffer(Math.max(ringBytes, sampleRate * 2));
+
+        // Bounded at twice the queue vanilla actually uses (Channel: 4 buffers x 1 s). The bound is
+        // a sanity clamp against a suspended process or a clock jump, not a tuning knob — the real
+        // depth is measured, and headroom costs nothing.
+        this.outputQueue = new OutputQueueEstimator(this.sampleRate, 2 * OUTPUT_QUEUE_SECONDS);
 
         this.decodeThread = new Thread(this::decodeLoop, "4m-decode-" + THREAD_COUNTER.incrementAndGet());
         this.decodeThread.setDaemon(true);
@@ -187,18 +202,41 @@ public final class ClientMediaSession implements Closeable {
      */
     public void readPcm(byte[] dest, int off, int len) {
         ring.read(dest, off, len);
+        // Every byte handed over here is queued by the sound system before it is heard. Counting it
+        // is what lets playbackPtsMicros() account for the last hop; see OutputQueueEstimator.
+        outputQueue.onRead(len / 2L, System.nanoTime());
+    }
+
+    /**
+     * The channel was destroyed and re-created — a resource reload, or an audio-device switch.
+     *
+     * <p>Whatever it had queued went with it, so the estimate has to start again; carrying the old
+     * figures over would subtract seconds of audio that no longer exists from the position.
+     */
+    public void onPlaybackRestarted() {
+        outputQueue.reset();
     }
 
     // ------------------------------------------------------------------ position and sync
 
-    /** Where playback actually is, or {@link #PTS_UNSET} before the first frame decodes. */
+    /**
+     * Where playback actually is, or {@link #PTS_UNSET} before the first frame decodes.
+     *
+     * <p>Three terms, and the third is the one that was missing. What has left the decoder
+     * ({@code writeSamples}), minus what is still in the ring, gives the audio handed to the sound
+     * system — which is not the same as the audio <em>heard</em>, because OpenAL queues several
+     * seconds of it. Without {@code queuedSamples} this reported playback about 2.2 s ahead of the
+     * truth, which pinned the drift there and made the presentation delay meaningless.
+     */
     public long playbackPtsMicros() {
+        long queuedSamples = outputQueue.queuedSamples(System.nanoTime());
         synchronized (posLock) {
             if (writeBasePtsMicros == PTS_UNSET) {
                 return PTS_UNSET;
             }
             long bufferedSamples = ring.available() / 2L;
-            return writeBasePtsMicros + Timeline.toMicros(writeSamples - bufferedSamples, sampleRate);
+            long playedSamples = writeSamples - bufferedSamples - queuedSamples;
+            return writeBasePtsMicros + Timeline.toMicros(playedSamples, sampleRate);
         }
     }
 
