@@ -50,3 +50,7 @@ bin/
 /*.mp3
 /*.ogg
 /*.aac
+
+# Local toolchain pinning (direnv) — machine-specific
+.envrc
+.direnv/
