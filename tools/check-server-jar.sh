@@ -120,6 +120,15 @@ grep -q 'has failed to load correctly' "$LOG" \
     && fail "the mod did not construct$(printf '\n')$(grep -A3 'Failed to create mod instance' "$LOG" | head -4)"
 
 echo "==> placing a radio and switching it on"
+# Force-loading is not a convenience, it is the difference between a real check and a coin flip.
+# A dedicated server with nobody online does not tick block entities: the spawn chunks stay loaded
+# but drop below ticking level once startup finishes, and RadioServer.tickBlock — which is what
+# acquires the relay session — simply never runs. This test passed for a while only because it
+# started the radio inside the few seconds after startup during which spawn chunks were still
+# ticking. Verified with a vanilla furnace as a control: fuelled and loaded, CookTime stayed 0.
+# forceload holds the chunk at entity-ticking level for as long as the check needs it.
+echo "forceload add 0 0" >&3
+sleep 1
 echo "setblock 0 -60 0 mmmm:radio" >&3
 sleep 2
 grep -q 'Unknown block type\|Could not set the block' "$LOG" && fail "mmmm:radio is not registered"
