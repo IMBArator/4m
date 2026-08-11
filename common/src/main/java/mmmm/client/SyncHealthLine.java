@@ -77,6 +77,11 @@ public final class SyncHealthLine {
         if (session.framesDroppedInbound() > 0) {
             line.append(" · dropped ").append(session.framesDroppedInbound());
         }
+        // Each one is a hole in the audio the anchor had to step over. Shown next to `dropped`
+        // because they are usually the same event seen from the two ends of the decoder.
+        if (session.discontinuities() > 0) {
+            line.append(" · gap ").append(session.discontinuities());
+        }
         return line.toString();
     }
 

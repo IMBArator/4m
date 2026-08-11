@@ -59,6 +59,16 @@ public final class ClientMediaSession implements Closeable {
      */
     private static final int OUTPUT_QUEUE_SECONDS = 4;
 
+    /**
+     * How far a frame's timestamp may fall from where the previous frame ended before the write
+     * anchor is moved to it.
+     *
+     * <p>Both ends derive timestamps through {@link Timeline}, so a contiguous stream agrees to well
+     * under a millisecond. One missing MP3 frame at 44.1 kHz is 26 ms, so this sits comfortably
+     * between "rounding" and "a gap", and cannot be tripped by ordinary arithmetic.
+     */
+    private static final long ANCHOR_TOLERANCE_MICROS = 10_000;
+
     /** Ring headroom beyond the presentation delay, for jitter and for the origin's burst. */
     private static final int RING_MARGIN_MS = 6_000;
 
@@ -89,6 +99,15 @@ public final class ClientMediaSession implements Closeable {
     private volatile boolean closed;
     private volatile boolean resyncRequested;
     private volatile long framesDroppedInbound;
+    private volatile long discontinuities;
+
+    /**
+     * Playback has diverged too far to be corrected, and should rejoin the stream from scratch.
+     *
+     * <p>Read and cleared by {@link ClientMedia}, which owns the sound instance and so is the only
+     * place that can actually restart anything.
+     */
+    private volatile boolean restartRequested;
 
     public ClientMediaSession(int sessionId, StreamInfo info, long epochNanos, int presentationDelayMs) {
         this.sessionId = sessionId;
@@ -182,7 +201,28 @@ public final class ClientMediaSession implements Closeable {
         }
 
         synchronized (posLock) {
-            if (writeBasePtsMicros == PTS_UNSET) {
+            // The anchor claims "the sample at writeSamples has timestamp base + writeSamples", and
+            // that is only true if every frame in between actually got decoded. Frames DO go
+            // missing: a singleplayer ESC pause stops the integrated server, the relay's pending
+            // frames pile up, and the whole backlog arrives in one burst on resume — 221 frames,
+            // about 5.8 s, overflowed the inbound queue and were dropped in the run that found this.
+            //
+            // Left unhandled, that hole is silent and permanent. The audio is merely missing, but
+            // the *position* is wrong by the lost duration for the rest of the session, so drift
+            // parks at -1825 ms with a hard resync firing every tick and no way back — a resync
+            // corrects by discarding, and nothing here is surplus.
+            //
+            // So the anchor follows the stream rather than assuming it: a frame whose timestamp is
+            // not where the previous one ended re-anchors instead of being counted as contiguous.
+            long expectedPtsMicros = writeBasePtsMicros == PTS_UNSET
+                    ? PTS_UNSET
+                    : writeBasePtsMicros + Timeline.toMicros(writeSamples, sampleRate);
+            boolean discontinuous = writeBasePtsMicros != PTS_UNSET
+                    && Math.abs(currentFramePtsMicros - expectedPtsMicros) > ANCHOR_TOLERANCE_MICROS;
+            if (writeBasePtsMicros == PTS_UNSET || discontinuous) {
+                if (discontinuous) {
+                    discontinuities++;
+                }
                 writeBasePtsMicros = currentFramePtsMicros;
                 writeSamples = 0;
             }
@@ -270,11 +310,18 @@ public final class ClientMediaSession implements Closeable {
     }
 
     /**
-     * Flushes and jumps to the correct position.
+     * Skips forward to the correct position, or asks to rejoin when it cannot.
      *
-     * <p>Also the resume-from-pause path: the game paused, frames kept arriving, and the ring is now
-     * holding minutes of audio nobody wants. Re-deriving the position from the clock handles that
-     * without any special case, which is a decent sign the sync design is the right shape.
+     * <p>This used to claim it handled resume-from-pause "without any special case", and that it
+     * being free was a sign the design was the right shape. It was not free and it did not work. A
+     * jump can only ever discard surplus history, so it corrects playback that is <em>behind</em>
+     * and is a silent no-op on playback that is <em>ahead</em> — whereupon it fires again on the
+     * next tick, nineteen times a second, for as long as the session lasts.
+     *
+     * <p>Being ahead was not some rare edge either: an uncounted output queue, silence padded in at
+     * startup, and a resumed pause all produce it. Those are cases where the client was
+     * <em>absent</em> while a live stream carried on, so there is no correct position to jump to —
+     * the audio to fill the gap was never received. {@link #consumeRestartRequest} exists for them.
      */
     private void hardResync(long targetPtsMicros) {
         synchronized (posLock) {
@@ -289,8 +336,22 @@ public final class ClientMediaSession implements Closeable {
                 resyncRequested = true;
                 return;
             }
-            long keepBytes = Math.min(Timeline.toSamples(keepMicros, sampleRate) * 2, ring.capacity());
-            ring.fastForwardTo((int) keepBytes);
+            // Only the ring can be skipped; audio already handed to the sound system is gone, so
+            // what the queue holds counts towards the target and is subtracted from what the ring
+            // must keep.
+            long queuedSamples = outputQueue.queuedSamples();
+            long wantedSamples = Timeline.toSamples(keepMicros, sampleRate);
+            long aheadSamples = ring.available() / 2L + queuedSamples;
+
+            if (wantedSamples > aheadSamples) {
+                // Playback is AHEAD of the clock, and skipping forward cannot fix that — there is no
+                // surplus to discard, only a shortage to wait out. Rather than correct it, rejoin:
+                // see restartRequested.
+                restartRequested = true;
+                return;
+            }
+            long keepInRing = Math.max(0, wantedSamples - queuedSamples);
+            ring.fastForwardTo((int) Math.min(keepInRing * 2, ring.capacity()));
         }
     }
 
@@ -298,6 +359,7 @@ public final class ClientMediaSession implements Closeable {
     private void applyFlush() {
         decoder.reset();
         ring.clear();
+
         synchronized (posLock) {
             writeBasePtsMicros = PTS_UNSET;
             writeSamples = 0;
@@ -366,6 +428,37 @@ public final class ClientMediaSession implements Closeable {
 
     public long framesDroppedInbound() {
         return framesDroppedInbound;
+    }
+
+    /**
+     * Times the write anchor had to be moved because frames went missing.
+     *
+     * <p>Worth surfacing: each one is a hole in the audio, and before the anchor followed the stream
+     * each one also permanently broke the playback position.
+     */
+    public long discontinuities() {
+        return discontinuities;
+    }
+
+    /**
+     * Whether playback should be torn down and rejoined, clearing the request.
+     *
+     * <p>Rejoining rather than correcting, because the situations that put playback ahead of the
+     * clock — a resumed pause, a chunk coming back, a hole in the stream — are all cases where the
+     * client was <em>absent</em> and the live stream moved on without it. "Carry on from where we
+     * were" is a false premise there: the ring holds stale content, the anchor describes a timeline
+     * that no longer applies, and every correction has to be exactly right to recover.
+     *
+     * <p>A rejoin needs none of that arithmetic to be right. It runs the same path as any client
+     * opening a session — backlog, warmup, position derived from the clock — which is the
+     * best-exercised code in the client, because every session start uses it.
+     */
+    public boolean consumeRestartRequest() {
+        if (!restartRequested) {
+            return false;
+        }
+        restartRequested = false;
+        return true;
     }
 
     /** Rolling window over the drift loop, for the health readout and the debug log. */

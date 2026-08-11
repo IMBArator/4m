@@ -106,6 +106,21 @@ public final class ClientMedia {
         }
 
         SoundManager sm = Minecraft.getInstance().getSoundManager();
+
+        // Playback has diverged too far to be steered back — a resumed pause, a chunk returning, a
+        // hole in the stream. Rejoin instead of correcting: tear down the channel and fall back
+        // through the warmup gate below, which is the same path every session start takes.
+        //
+        // The ring is deliberately NOT flushed. Its audio is still perfectly good and still
+        // correctly anchored; what has gone stale is the channel and the queue estimate that
+        // described it. Flushing would throw away several seconds we would then have to wait to
+        // re-accumulate, turning a rejoin into a long silence for no benefit.
+        if (session.consumeRestartRequest()) {
+            stopSound(pos);
+            session.onPlaybackRestarted();
+            return;
+        }
+
         RadioSoundInstance sound = sounds.get(pos);
 
         // Warmup: wait until the ring has enough decoded audio for BOTH the drift controller's
