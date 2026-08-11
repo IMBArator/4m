@@ -1,20 +1,12 @@
 package mmmm.server;
 
-import mmmm.Stations;
 import mmmm.block.RadioBlockEntity;
 import mmmm.client.ClientMessages;
-import mmmm.core.security.EgressDeniedException;
-import mmmm.core.security.EgressGuard;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
-
-import java.net.URI;
-import java.util.Locale;
-import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * What the server does when a player changes a radio's settings.
@@ -27,13 +19,15 @@ import java.util.regex.Pattern;
  * can send a {@link ClientMessages.ConfigureRadio} for any position with any string in it. The
  * screen disables the controls a player may not use, but that is decoration; this class is the
  * actual boundary. It re-derives every permission from the sender.
+ *
+ * <p>What this class checks is the <em>sender</em>: that they exist, that the position is loaded,
+ * that they are close enough, and that there is a radio there. What a station URL is allowed to be
+ * is {@link StationPolicy}'s question, not this one's.
  */
 public final class ServerNetwork {
 
     /** Eight blocks. Comfortably past reach, far short of "any radio in the world". */
     private static final double MAX_REACH_SQ = 64.0;
-
-    private static final Pattern IPV4_LITERAL = Pattern.compile("\\d{1,3}(\\.\\d{1,3}){3}");
 
     private ServerNetwork() {
     }
@@ -79,103 +73,20 @@ public final class ServerNetwork {
         radio.setPlaying(msg.playing());
     }
 
-    /** @return true if the station was accepted and applied */
-    private static boolean applyStation(ServerPlayer sender, RadioBlockEntity radio, String url) {
-        if (isShippedStation(url)) {
-            setStation(radio, url);
-            return true;
-        }
-
-        // Anything not on the shipped list is a free-form URL, which ADR-0011 gates on permission
-        // level. This is the gate; the screen hiding the button is not.
-        if (!sender.hasPermissions(2)) {
-            refuse(sender, "Only server operators may set a custom station.");
-            return false;
-        }
-
-        URI uri;
-        try {
-            uri = URI.create(url);
-        } catch (IllegalArgumentException e) {
-            refuse(sender, "That is not a valid URL.");
-            return false;
-        }
-        String scheme = uri.getScheme();
-        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-            refuse(sender, "Station URLs must start with http:// or https://");
-            return false;
-        }
-        String host = uri.getHost();
-        if (host == null || host.isBlank()) {
-            refuse(sender, "That URL has no host.");
-            return false;
-        }
-
-        if (!checkLiteralAddress(sender, uri, host)) {
-            return false;
-        }
-
-        if (!RadioServer.authoriseHost(host)) {
-            refuse(sender, "Could not authorise that host — the server's allowlist is full.");
-            return false;
-        }
-        setStation(radio, url);
-        sender.sendSystemMessage(Component.literal("Station set. " + host + " is now allowed on this server.")
-                .withStyle(ChatFormatting.GRAY));
-        return true;
-    }
-
     /**
-     * Refuses an address literal that points somewhere it should not, without touching DNS.
-     *
-     * <p>This is deliberately only half a check. The full one — resolve the name, then refuse if
-     * <em>any</em> resolved address is loopback, RFC1918, CGNAT or link-local — runs in
-     * {@code EgressGuard} on the relay thread when the connection is actually made, and that is
-     * where it must run, because it blocks on DNS and this method is on the server thread. A name
-     * lookup here would stall every player on the server for as long as the resolver took.
-     *
-     * <p>What it does buy is an immediate, explained refusal for the cases someone would actually
-     * type on purpose — {@code 127.0.0.1}, {@code 10.x}, and the cloud metadata endpoint at
-     * {@code 169.254.169.254}. Those are literals, and {@code getAllByName} does not resolve a
-     * literal, so the real guard can be asked about them for free.
-     *
-     * <p>A hostname that resolves somewhere blocked is still refused — one round trip later, by the
-     * relay, which stops the block and reports {@code FAILED}.
+     * @return true if the station was accepted and applied
+     * @see StationPolicy for what "accepted" means and why the rules live elsewhere
      */
-    private static boolean checkLiteralAddress(ServerPlayer sender, URI uri, String host) {
-        String bare = host.startsWith("[") && host.endsWith("]")
-                ? host.substring(1, host.length() - 1)
-                : host;
-        boolean literal = IPV4_LITERAL.matcher(bare).matches() || bare.indexOf(':') >= 0;
-        if (!literal) {
-            return true;
-        }
-        try {
-            EgressGuard.allowing(Set.of(host.toLowerCase(Locale.ROOT))).check(uri);
-            return true;
-        } catch (EgressDeniedException e) {
-            refuse(sender, e.getMessage());
+    private static boolean applyStation(ServerPlayer sender, RadioBlockEntity radio, String url) {
+        StationPolicy.Verdict verdict = StationPolicy.vetAndAuthorise(url, sender.hasPermissions(2));
+        if (!verdict.accepted()) {
+            sender.sendSystemMessage(Component.literal(verdict.message()).withStyle(ChatFormatting.RED));
             return false;
         }
-    }
-
-    private static void setStation(RadioBlockEntity radio, String url) {
-        radio.setStation(url);
-        // A stale FAILED from the previous station would otherwise sit there until the next tick,
-        // claiming the newly chosen station had already failed.
-        radio.setSessionState(null);
-    }
-
-    private static boolean isShippedStation(String url) {
-        for (Stations.Station station : Stations.DEFAULTS) {
-            if (station.url().equals(url)) {
-                return true;
-            }
+        StationPolicy.apply(radio, url);
+        if (verdict.message() != null) {
+            sender.sendSystemMessage(Component.literal(verdict.message()).withStyle(ChatFormatting.GRAY));
         }
-        return false;
-    }
-
-    private static void refuse(ServerPlayer sender, String reason) {
-        sender.sendSystemMessage(Component.literal(reason).withStyle(ChatFormatting.RED));
+        return true;
     }
 }
