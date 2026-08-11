@@ -229,7 +229,7 @@ public final class ClientMediaSession implements Closeable {
      * truth, which pinned the drift there and made the presentation delay meaningless.
      */
     public long playbackPtsMicros() {
-        long queuedSamples = outputQueue.queuedSamples(System.nanoTime());
+        long queuedSamples = outputQueue.queuedSamples();
         synchronized (posLock) {
             if (writeBasePtsMicros == PTS_UNSET) {
                 return PTS_UNSET;
@@ -251,6 +251,9 @@ public final class ClientMediaSession implements Closeable {
      * @return the drift in microseconds, positive when playback is behind the clock
      */
     public long steer(long serverNowNanos) {
+        // Before reading position, and with the rate the audio is actually being played at — see
+        // OutputQueueEstimator.advance, where assuming the nominal rate reverses the loop's sign.
+        outputQueue.advance(System.nanoTime(), drift.rateTrim());
         long actual = playbackPtsMicros();
         if (actual == PTS_UNSET) {
             return 0;

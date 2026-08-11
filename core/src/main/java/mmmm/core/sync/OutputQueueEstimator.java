@@ -39,6 +39,8 @@ public final class OutputQueueEstimator {
 
     private long handedOutSamples;
     private long firstReadNanos = UNSET;
+    private long lastAdvanceNanos = UNSET;
+    private double playedSamples;
 
     /**
      * @param sampleRate       samples per second of the stream being played
@@ -61,8 +63,35 @@ public final class OutputQueueEstimator {
             // its buffers and then starts the source. Any error here is a one-off of a few
             // milliseconds, against a quantity measured in seconds.
             firstReadNanos = nowNanos;
+            lastAdvanceNanos = nowNanos;
         }
         handedOutSamples += samples;
+    }
+
+    /**
+     * Advances the played-samples estimate. Call once per drift-loop step, before reading position.
+     *
+     * <h2>Why the rate matters, and why it is integrated rather than applied to the total</h2>
+     * The drift controller trims the playback rate, so audio is <em>not</em> consumed at the nominal
+     * sample rate. Assuming it is turns the control loop positive: a higher trim makes the sound
+     * system drain faster and ask for more, {@code handedOutSamples} climbs, the estimated queue
+     * grows, position moves backwards and measured drift <em>rises</em> — so the integral pushes the
+     * trim up again. Observed as a rate trim ramping 3 ppm per second towards its ceiling with the
+     * drift stuck at +4 ms, which is a controller with the sign of its feedback reversed.
+     *
+     * <p>Integrated step by step rather than multiplying total elapsed time by the current trim,
+     * because the trim changes: applying today's value to an hour of history would rewrite the past
+     * every tick.
+     *
+     * @param rateTrim playback rate multiplier, 1.0 being nominal speed
+     */
+    public void advance(long nowNanos, double rateTrim) {
+        if (lastAdvanceNanos == UNSET) {
+            return;
+        }
+        long deltaNanos = Math.max(0, nowNanos - lastAdvanceNanos);
+        lastAdvanceNanos = nowNanos;
+        playedSamples += deltaNanos * 1.0e-9 * sampleRate * rateTrim;
     }
 
     /**
@@ -72,14 +101,11 @@ public final class OutputQueueEstimator {
      *         more than it was given, so a negative result means the elapsed-time estimate has run
      *         ahead (a pause, or a suspended process) and the honest answer is "nothing is queued"
      */
-    public long queuedSamples(long nowNanos) {
+    public long queuedSamples() {
         if (firstReadNanos == UNSET) {
             return 0;
         }
-        long elapsedNanos = Math.max(0, nowNanos - firstReadNanos);
-        long playedSamples = elapsedNanos / 1_000_000_000L * sampleRate
-                + (elapsedNanos % 1_000_000_000L) * sampleRate / 1_000_000_000L;
-        long queued = handedOutSamples - playedSamples;
+        long queued = handedOutSamples - (long) playedSamples;
         return Math.max(0, Math.min(queued, maxQueuedSamples));
     }
 
@@ -90,6 +116,8 @@ public final class OutputQueueEstimator {
      */
     public void reset() {
         handedOutSamples = 0;
+        playedSamples = 0;
         firstReadNanos = UNSET;
+        lastAdvanceNanos = UNSET;
     }
 }

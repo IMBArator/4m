@@ -20,7 +20,7 @@ class OutputQueueEstimatorTest {
     @Test
     void nothingIsQueuedBeforePlaybackStarts() {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
-        assertEquals(0, estimator.queuedSamples(SECOND * 100));
+        assertEquals(0, estimator.queuedSamples());
     }
 
     /** The startup gulp: the channel pumps its buffers before a single sample can have played. */
@@ -28,7 +28,7 @@ class OutputQueueEstimatorTest {
     void everythingHandedOverAtOnceIsStillQueued() {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(4L * RATE, 0);
-        assertEquals(4L * RATE, estimator.queuedSamples(0));
+        assertEquals(4L * RATE, estimator.queuedSamples());
     }
 
     @Test
@@ -36,8 +36,58 @@ class OutputQueueEstimatorTest {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(4L * RATE, 0);
 
-        assertEquals(3L * RATE, estimator.queuedSamples(SECOND));
-        assertEquals(2L * RATE, estimator.queuedSamples(2 * SECOND));
+        estimator.advance(SECOND, 1.0);
+        assertEquals(3L * RATE, estimator.queuedSamples());
+        estimator.advance(2 * SECOND, 1.0);
+        assertEquals(2L * RATE, estimator.queuedSamples());
+    }
+
+    /**
+     * The loop-stability case. A trim above nominal means audio really is consumed faster, so the
+     * estimate must drain faster too — otherwise raising the trim inflates the apparent queue,
+     * position moves backwards, measured drift rises, and the controller pushes the trim up again.
+     * That positive feedback was observed as a trim ramping steadily towards its ceiling.
+     */
+    @Test
+    void aFasterPlaybackRateDrainsTheQueueFaster() {
+        OutputQueueEstimator nominal = new OutputQueueEstimator(RATE, 8.0);
+        OutputQueueEstimator fast = new OutputQueueEstimator(RATE, 8.0);
+        nominal.onRead(4L * RATE, 0);
+        fast.onRead(4L * RATE, 0);
+
+        nominal.advance(SECOND, 1.0);
+        fast.advance(SECOND, 1.001);
+
+        assertTrue(fast.queuedSamples() < nominal.queuedSamples(),
+                "a faster rate must consume more, or the drift loop's feedback is reversed");
+    }
+
+    @Test
+    void aSlowerPlaybackRateDrainsTheQueueSlower() {
+        OutputQueueEstimator nominal = new OutputQueueEstimator(RATE, 8.0);
+        OutputQueueEstimator slow = new OutputQueueEstimator(RATE, 8.0);
+        nominal.onRead(4L * RATE, 0);
+        slow.onRead(4L * RATE, 0);
+
+        nominal.advance(SECOND, 1.0);
+        slow.advance(SECOND, 0.999);
+
+        assertTrue(slow.queuedSamples() > nominal.queuedSamples());
+    }
+
+    /** The trim changes over time, so history must not be rewritten with the current value. */
+    @Test
+    void theRateIsIntegratedNotAppliedToTheWholeHistory() {
+        OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
+        estimator.onRead(8L * RATE, 0);
+
+        estimator.advance(SECOND, 1.0);
+        estimator.advance(2 * SECOND, 1.0);
+        // Only this last second is played fast; the two before it stay at nominal.
+        estimator.advance(3 * SECOND, 2.0);
+
+        // 1 + 1 + 2 = 4 seconds played, of 8 handed over.
+        assertEquals(4L * RATE, estimator.queuedSamples(), RATE / 100);
     }
 
     /** Steady state: read a second's worth every second, and the queue depth holds. */
@@ -47,8 +97,9 @@ class OutputQueueEstimatorTest {
         estimator.onRead(4L * RATE, 0);
 
         for (int second = 1; second <= 10; second++) {
+            estimator.advance(second * SECOND, 1.0);
             estimator.onRead(RATE, second * SECOND);
-            assertEquals(4L * RATE, estimator.queuedSamples(second * SECOND),
+            assertEquals(4L * RATE, estimator.queuedSamples(),
                     "the queue should stay four seconds deep at second " + second);
         }
     }
@@ -62,7 +113,8 @@ class OutputQueueEstimatorTest {
     void theQueueIsNeverNegative() {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(RATE, 0);
-        assertEquals(0, estimator.queuedSamples(60 * SECOND));
+        estimator.advance(60 * SECOND, 1.0);
+        assertEquals(0, estimator.queuedSamples());
     }
 
     /**
@@ -73,7 +125,7 @@ class OutputQueueEstimatorTest {
     void theEstimateIsBounded() {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(1000L * RATE, 0);
-        assertEquals(8L * RATE, estimator.queuedSamples(0));
+        assertEquals(8L * RATE, estimator.queuedSamples());
     }
 
     @Test
@@ -82,9 +134,9 @@ class OutputQueueEstimatorTest {
         estimator.onRead(4L * RATE, 0);
         estimator.reset();
 
-        assertEquals(0, estimator.queuedSamples(0), "a re-created channel starts with an empty queue");
+        assertEquals(0, estimator.queuedSamples(), "a re-created channel starts with an empty queue");
         estimator.onRead(RATE, 10 * SECOND);
-        assertEquals(RATE, estimator.queuedSamples(10 * SECOND),
+        assertEquals(RATE, estimator.queuedSamples(),
                 "and the clock restarts from the new first read, not the old one");
     }
 
@@ -93,8 +145,9 @@ class OutputQueueEstimatorTest {
     void partialSecondsDrainProportionally() {
         OutputQueueEstimator estimator = new OutputQueueEstimator(RATE, 8.0);
         estimator.onRead(RATE, 0);
+        estimator.advance(SECOND / 2, 1.0);
 
-        long half = estimator.queuedSamples(SECOND / 2);
+        long half = estimator.queuedSamples();
         assertTrue(Math.abs(half - RATE / 2) < 100,
                 "half a second in, half a second should remain, got " + half);
     }
