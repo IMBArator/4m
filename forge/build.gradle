@@ -107,8 +107,15 @@ jarJar.enable()
 // ForgeGradle resolves from build/classes/java/main. This is a dev-mode-only workaround, and it is
 // only dev-mode-only because `jar` excludes javazoom/** — without that exclusion the classes ride
 // along into the shipped jar and quietly defeat ADR-0010's Jar-in-Jar arrangement.
+//
+// The `from` argument is a closure, not a value, so runtimeClasspath is resolved at execution time
+// rather than while this task is being realized. Resolving it eagerly asks ForgeGradle to generate
+// the mapped+AT'd Forge artifact from inside dependency resolution, where Gradle's mutation guard
+// forbids the tasks MinecraftUserRepo needs to create. That surfaces only as
+// "Could not find net.minecraftforge:forge:...mapped_parchment..._at_...", and only on a machine
+// whose ForgeGradle cache does not already hold that artifact — so a warm cache hides it entirely.
 tasks.register('extractJLayer', Copy) {
-    from(zipTree(configurations.runtimeClasspath.filter { it.name.startsWith('jlayer') }.singleFile))
+    from({ zipTree(configurations.runtimeClasspath.filter { it.name.startsWith('jlayer') }.singleFile) })
     into(layout.buildDirectory.dir('classes/java/main'))
     exclude 'META-INF/**'
 }
