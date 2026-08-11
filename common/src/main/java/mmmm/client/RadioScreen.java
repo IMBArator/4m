@@ -140,11 +140,11 @@ public final class RadioScreen extends Screen {
 
         Component health = syncHealth();
         if (health != null) {
-            // Left-aligned, unlike everything else on this panel, and deliberately. Centred text
-            // re-centres whenever its length changes, so every digit slides sideways each time the
-            // drift gains or loses a character — which makes a line of changing numbers unreadable
-            // however slowly it updates. Anchoring the left edge keeps each field in one place.
-            graphics.drawString(font, health, (width - PANEL_WIDTH) / 2, height - 16, 0xB0B0B0, false);
+            // Centred like the rest of the panel. What made the earlier version dance was not the
+            // centring but the changing length behind it — a line that gains a character re-centres
+            // and shifts every digit. SyncHealthLine pads each field to a fixed width so the length
+            // stays constant, which is what makes centring hold still.
+            graphics.drawCenteredString(font, health, width / 2, height - 16, 0xB0B0B0);
         }
     }
 

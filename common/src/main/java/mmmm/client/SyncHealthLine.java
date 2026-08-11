@@ -43,12 +43,23 @@ public final class SyncHealthLine {
         }
 
         SyncMeter meter = session.syncMeter();
+        if (!meter.hasSamples()) {
+            // The drift loop has not run for this session yet, so there is nothing measured. Saying
+            // "+0ms" here would be the readout's third way of reporting perfect sync when it simply
+            // has no data — the failure this class exists to avoid.
+            return "starting: " + SyncFormat.seconds(session.bufferedMicros()) + " buffered";
+        }
+
+        // Every field is padded to a fixed width. The line is centred, so a field that gains a
+        // character re-centres the whole line and slides every digit sideways; a constant length
+        // keeps each number in the same place, which is the difference between a readout that can
+        // be read at a glance and one that has to be screenshotted.
         StringBuilder line = new StringBuilder();
-        line.append("drift ").append(SyncFormat.signedMillis(meter.meanDriftMicros()));
-        line.append(" ±").append(SyncFormat.millis(meter.driftSpanMicros() * 1000L / 2));
-        line.append(" · buf ").append(SyncFormat.seconds(session.bufferedMicros()));
-        line.append(" · trim ").append(SyncFormat.rateTrimPpm(meter.meanRateTrim()));
-        line.append(" · rtt ").append(SyncFormat.millis(clock.bestRoundTripNanos()));
+        line.append("drift ").append(pad(SyncFormat.signedMillis(meter.meanDriftMicros()), 7));
+        line.append(" ±").append(pad(SyncFormat.millis(meter.driftSpanMicros() * 1000L / 2), 6));
+        line.append(" · buf ").append(pad(SyncFormat.seconds(session.bufferedMicros()), 5));
+        line.append(" · trim ").append(pad(SyncFormat.rateTrimPpm(meter.meanRateTrim()), 8));
+        line.append(" · rtt ").append(pad(SyncFormat.millis(clock.bestRoundTripNanos()), 5));
 
         if (session.underrunning()) {
             line.append(" · UNDERRUN");
@@ -67,5 +78,13 @@ public final class SyncHealthLine {
             line.append(" · dropped ").append(session.framesDroppedInbound());
         }
         return line.toString();
+    }
+
+    /** Right-aligns to a fixed width, so the line's length does not change as values do. */
+    private static String pad(String value, int width) {
+        if (value.length() >= width) {
+            return value;
+        }
+        return " ".repeat(width - value.length()) + value;
     }
 }
