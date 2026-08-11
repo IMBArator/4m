@@ -2,17 +2,13 @@ package mmmm.forge;
 
 import mmmm.Mmmm;
 import mmmm.MmmmContent;
-import mmmm.block.RadioBlock;
 import mmmm.client.ClientMedia;
-import mmmm.client.ClientMessages;
-import mmmm.client.ClientNetwork;
-import mmmm.client.RadioScreen;
 import mmmm.core.relay.RelayConfig;
 import mmmm.core.relay.RelayManager;
 import mmmm.core.relay.SourceOpener;
 import mmmm.core.source.SourceConfig;
+import mmmm.forge.client.ForgeClientSetup;
 import mmmm.server.RadioServer;
-import net.minecraft.client.Minecraft;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -77,18 +73,16 @@ public final class MmmmForge {
         MmmmContent.bind(Registration.RADIO_BLOCK_ENTITY, Registration.RADIO_STREAM);
     }
 
+    /**
+     * Delegates, and must keep delegating — the body stays a single argument-less static call.
+     *
+     * <p>This class is loaded and verified on a dedicated server. Inlining any of the wiring back
+     * here puts its bytecode in <em>this</em> class, and the verifier then loads the client types it
+     * mentions to type-check them, which Forge's dist cleaner turns into a hard crash at mod
+     * construction. {@link ForgeClientSetup} carries the full account.
+     */
     private static void clientSetup(FMLClientSetupEvent event) {
-        // The block entity ticker is how shared code reaches the client audio path without the
-        // dedicated server ever loading a {@code net.minecraft.client.*} class.
-        RadioBlock.setClientTicker(ClientMedia::tickBlock);
-        // Same trick for the control panel: RadioBlock names neither Minecraft nor RadioScreen.
-        RadioBlock.setScreenOpener(radio -> Minecraft.getInstance().setScreen(new RadioScreen(radio)));
-        // And the ping sender is how shared code sends a clock ping without referencing a loader's
-        // networking package. The body constructs the loader-specific message.
-        ClientMedia.setPingSender(clientNanos ->
-                MmmmNetwork.sendToServer(new ClientMessages.ClockPing(clientNanos)));
-        // The screen's outbound direction, for the same reason.
-        ClientNetwork.setConfigSender(MmmmNetwork::sendToServer);
+        ForgeClientSetup.install();
     }
 
     // ------------------------------------------------------------------ server lifecycle

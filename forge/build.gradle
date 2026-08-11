@@ -151,6 +151,45 @@ tasks.named('jar') { finalizedBy 'reobfJar' }
 // user reaches for by name is the one that loads.
 tasks.named('jarJar') { archiveClassifier = '' }
 
+// Guard rail for the dist split. A dedicated server VERIFIES every class it loads, and verification
+// resolves the types an argument is checked against — so a single client type named in the entry
+// class is enough for Forge's RuntimeDistCleaner to abort mod construction with
+// "Attempted to load class ... for invalid dist DEDICATED_SERVER". That is a crash on boot, and
+// runClient cannot produce it, because runClient is a client.
+//
+// The rule enforced is deliberately blunt: a file that names net.minecraft.client lives in a
+// `client` package, nothing else does. Blunter than the real invariant and much easier to keep.
+//
+// It catches the import-level form only. The subtler form — a lambda whose body mentions a client
+// type, compiled into whichever class encloses it — needs an actual dedicated server to catch, which
+// is what tools/check-server-jar.sh is for.
+tasks.register('checkClientClassesAreClientOnly') {
+    group = 'verification'
+    description = 'Fails if a non-client package imports net.minecraft.client.'
+    def roots = [rootProject.file('common/src/main/java'), file('src/main/java')]
+    doLast {
+        def offenders = []
+        roots.findAll { it.exists() }.each { root ->
+            root.eachFileRecurse { f ->
+                if (f.name.endsWith('.java') && f.parentFile.name != 'client') {
+                    f.eachLine { line ->
+                        if (line =~ /^\s*import\s+(static\s+)?net\.minecraft\.client\./) {
+                            offenders << "${root.toPath().relativize(f.toPath())}: ${line.trim()}"
+                        }
+                    }
+                }
+            }
+        }
+        if (offenders) {
+            throw new GradleException(
+                "Only a `client` package may import net.minecraft.client — a dedicated server " +
+                "loads everything else and dies on it:\n  " + offenders.join('\n  '))
+        }
+    }
+}
+
+tasks.named('check') { dependsOn 'checkClientClassesAreClientOnly' }
+
 processResources {
     def props = [
             modId: modId, modName: modName, modVersion: modVersion,
