@@ -171,7 +171,7 @@ under construction there is a fast loop that requires only a JDK 17:
 
 ```bash
 export JAVA_HOME=~/.jdks/jdk-17...           # see Toolchain setup
-./tools/build-core.sh                        # compile + 123 tests, no Gradle
+./tools/build-core.sh                        # compile + 158 tests, no Gradle
 ./tools/build-core.sh probe https://somafm.com/groovesalad.pls 20 out.mp3
 ```
 
@@ -182,6 +182,18 @@ The full build, once the toolchain is in place:
 ./gradlew :forge:build
 ./gradlew :forge:runClient
 ```
+
+Before handing anyone a jar, check the jar rather than the build:
+
+```bash
+./tools/check-server-jar.sh                  # boots the produced jar on a real Forge server
+```
+
+`runClient` runs from the source set, so it never loads the jar at all — and it is a *client*, so
+Forge's dist checks never refuse anything. A green build has, in practice, coexisted with a jar that
+could not load and with a mod that crashed every dedicated server. This script boots the artifact,
+places a radio and waits for the relay to reach `PLAYING`. Install
+`mmmm-forge-1.20.1-<version>.jar`; the `-slim` one has no nested libraries and is not for use.
 
 `:neoforge` is commented out of `settings.gradle` until its build file is moved to a toolchain that
 supports 1.20.1 — until then `./gradlew build` covers Forge only. Once it is back, CI must run both

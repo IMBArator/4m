@@ -35,11 +35,18 @@ See the toolchain section in `README.md`.
 
 ```bash
 export JAVA_HOME=~/.jdks/$(ls ~/.jdks | grep jdk-17)
-./gradlew :core:test        # 123 tests, no Minecraft toolchain needed
+./gradlew :core:test        # 158 tests, no Minecraft toolchain needed
 ./gradlew :forge:build
 ./gradlew :forge:runClient
 ./tools/build-core.sh       # faster :core loop, JDK only, no Gradle
+./tools/check-server-jar.sh # boots the PRODUCED jar on a real dedicated server
 ```
+
+A green `:forge:build` does not mean the jar works. `runClient` runs from the source set
+rather than the jar, and it is a client, so neither missing jar contents nor a client class
+reachable from server code can show up there — both have shipped. Run
+`check-server-jar.sh` after any change to packaging, to `MmmmForge`, or to the
+client/server split.
 
 `:neoforge` is commented out of `settings.gradle` — its build file targets a NeoGradle
 line that does not support 1.20.1. `settings.gradle` explains the details.
