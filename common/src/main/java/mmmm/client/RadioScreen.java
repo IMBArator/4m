@@ -110,7 +110,7 @@ public final class RadioScreen extends Screen {
             urlBox.tick();
         }
         playStop.setMessage(playLabel());
-        volume.followBlock();
+        volume.onScreenTick();
         if (!shownStation.equals(radio.getStation())) {
             rebuildStations();
         }
@@ -221,10 +221,29 @@ public final class RadioScreen extends Screen {
 
     // ------------------------------------------------------------------ widgets
 
-    /** Volume, 0..1, sent once per adjustment rather than once per pixel of drag. */
+    /**
+     * Volume, 0..1.
+     *
+     * <h2>Why dragging sends, rather than only releasing</h2>
+     * The sound follows the <em>block entity's</em> volume, which only changes once the server has
+     * accepted it. So a slider that sent only on release moved visually while nothing audible
+     * happened — the change landed all at once when you let go. Sending during the drag is what
+     * makes it live, and it keeps the block entity the single authority rather than introducing a
+     * local preview value that only the dragging player can hear.
+     *
+     * <p>Throttled to the tick, not per mouse event: a drag fires dozens of events a second, and
+     * every accepted change costs a block update to each client tracking that chunk. At 10 Hz the
+     * ramp is smooth to the ear — volume is not pitch — and the traffic is a rounding error beside
+     * the audio itself.
+     */
     private final class VolumeSlider extends AbstractSliderButton {
 
+        /** Client ticks between sends while dragging. 20 Hz / 2 = 10 Hz. */
+        private static final int SEND_INTERVAL_TICKS = 2;
+
         private boolean adjustingWithMouse;
+        private double lastSent = -1.0;
+        private int ticksSinceSend;
 
         VolumeSlider(int x, int y, int width, int height, double initial) {
             super(x, y, width, height, Component.empty(), Mth.clamp(initial, 0.0, 1.0));
@@ -235,9 +254,17 @@ public final class RadioScreen extends Screen {
             return value;
         }
 
-        /** Follows the block entity unless the player is mid-drag, so another client's change lands. */
-        void followBlock() {
-            if (!adjustingWithMouse && Math.abs(value - radio.getVolume()) > 0.001) {
+        /** Pushes the in-progress value while dragging; otherwise follows the block entity. */
+        void onScreenTick() {
+            if (adjustingWithMouse) {
+                ticksSinceSend++;
+                if (ticksSinceSend >= SEND_INTERVAL_TICKS && Math.abs(value - lastSent) > 0.005) {
+                    sendVolume();
+                }
+                return;
+            }
+            // Not being dragged, so the server — and therefore another player's change — wins.
+            if (Math.abs(value - radio.getVolume()) > 0.001) {
                 value = Mth.clamp(radio.getVolume(), 0.0F, 1.0F);
                 updateMessage();
             }
